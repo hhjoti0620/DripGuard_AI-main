@@ -1,0 +1,13 @@
+{
+  "model": "models/best.onnx",
+  "input_size": 640,
+  "conf": 0.163,
+  "iou": 0.6,
+  "drop_factor_options": {
+    "macro_adult_20": 20,
+    "micro_paediatric_60": 60
+  },
+  "engine_params": {},
+  "min_recommended_camera_fps": 25,
+  "note": "drop_factor and prescribed_dpm MUST come from the operator; the model does not read set type."
+}

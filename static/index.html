@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DripGuard AI — Clinical Infusion Mission Control</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b1120; --panel: #111827; --card: #0f172a; --border: #1f2937;
+      --text: #f3f4f6; --muted: #9ca3af; --accent: #38bdf8;
+      --green: #22c55e; --amber: #f59e0b; --red: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', system-ui, sans-serif; }
+    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+    header {
+      background: var(--panel); border-bottom: 1px solid var(--border);
+      padding: 12px 22px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .toast {
+      position: fixed; bottom: 18px; right: 18px; background: #1e293b; border: 1px solid var(--accent);
+      color: var(--text); padding: 12px 16px; border-radius: 10px; font-size: 0.85rem; z-index: 999;
+      display: none; max-width: 420px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); line-height: 1.4;
+    }
+    .toast.error { border-color: var(--red); background: #2d1216; }
+    .login-overlay {
+      position: fixed; inset: 0; background: rgba(7, 11, 22, 0.94); z-index: 1000;
+      display: flex; align-items: center; justify-content: center; padding: 16px;
+    }
+    .login-box {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+      padding: 28px; width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 14px;
+    }
+    .ward-bar {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 14px 22px 0;
+    }
+    @media (max-width: 900px) { .ward-bar { grid-template-columns: repeat(2, 1fr); } }
+    .stat-pill {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .grid {
+      display: grid; grid-template-columns: 290px 360px 1fr 330px; gap: 16px;
+      padding: 16px 22px 24px; flex: 1;
+    }
+    @media (max-width: 1360px) { .grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 780px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .card h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.9px; color: var(--muted); }
+    .bed-item {
+      background: var(--card); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px;
+      cursor: pointer; transition: 0.15s; display: flex; flex-direction: column; gap: 4px;
+    }
+    .bed-item.active { border-color: var(--accent); background: rgba(56, 189, 248, 0.08); }
+    .badge { font-size: 0.7rem; padding: 2px 7px; border-radius: 999px; font-weight: 700; }
+    .badge-RUNNING { background: rgba(34,197,94,0.16); color: var(--green); }
+    .badge-ORDERED, .badge-PAUSED { background: rgba(245,158,11,0.16); color: var(--amber); }
+    .badge-ALERT { background: rgba(239,68,68,0.2); color: var(--red); }
+    .video-wrap {
+      position: relative; width: 100%; background: #030712; border-radius: 10px;
+      overflow: hidden; border: 1px solid var(--border); display: flex; justify-content: center;
+    }
+    #liveFrame { width: 100%; max-height: 560px; object-fit: contain; display: block; }
+    .pulse-badge {
+      position: absolute; top: 10px; right: 10px; background: var(--green); color: #052e16;
+      font-weight: 800; padding: 4px 10px; border-radius: 999px; font-size: 0.78rem;
+      opacity: 0; transition: opacity 0.15s;
+    }
+    .pulse-badge.show { opacity: 1; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+    .kpi-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; }
+    .kpi-val { font-size: 1.55rem; font-weight: 800; margin-top: 3px; color: var(--accent); }
+    .status-banner {
+      padding: 12px 14px; border-radius: 10px; font-weight: 700; display: flex;
+      justify-content: space-between; align-items: center; border: 1px solid var(--border); background: var(--card);
+    }
+    .status-NORMAL { border-color: var(--green); color: var(--green); background: rgba(34,197,94,0.1); }
+    .status-MEASURING { border-color: var(--amber); color: var(--amber); background: rgba(245,158,11,0.1); }
+    .status-FAST, .status-SLOW, .status-STOPPED_OR_OCCLUDED {
+      border-color: var(--red); color: var(--red); background: rgba(239,68,68,0.14);
+    }
+    .xai-box {
+      background: var(--card); border-left: 3px solid var(--accent); padding: 10px 12px;
+      border-radius: 6px; font-size: 0.8rem; line-height: 1.45; color: #dbeafe;
+    }
+    label { font-size: 0.78rem; color: var(--muted); display: block; margin-bottom: 4px; }
+    select, input {
+      width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--card); color: var(--text); font-size: 0.88rem;
+    }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    button {
+      padding: 9px 12px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer;
+      background: var(--accent); color: #082f49; font-size: 0.85rem;
+    }
+    button.secondary { background: #1f2937; color: var(--text); }
+    button.danger { background: rgba(239,68,68,0.2); color: #fca5a5; border: 1px solid rgba(239,68,68,0.4); }
+    .chart-box { height: 190px; position: relative; }
+    .alert-row {
+      background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.35);
+      border-radius: 8px; padding: 8px 10px; font-size: 0.78rem; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="loginModal" class="login-overlay" role="dialog" aria-labelledby="loginHeading">
+    <form class="login-box" onsubmit="handleLogin(event)">
+      <div class="brand" id="loginHeading"><span class="dot"></span> DripGuard AI Clinical Sign-In</div>
+      <p style="font-size:0.82rem; color:var(--muted);">Authenticated RBAC access required for ICU telemetry &amp; infusion orders.</p>
+      <div>
+        <label for="loginUser">Clinician Username</label>
+        <input id="loginUser" type="text" value="doctor1" required autocomplete="username" />
+      </div>
+      <div>
+        <label for="loginPass">Password</label>
+        <input id="loginPass" type="password" value="ChangeMe@2026" required autocomplete="current-password" />
+      </div>
+      <button type="submit" onclick="handleLogin(event)">Sign In to Mission Control</button>
+      <p id="loginErr" style="font-size:0.78rem; color:var(--red); display:none;"></p>
+      <p style="font-size:0.75rem; color:var(--muted);">Roles: <code>nurse1</code> (Bedside) • <code>doctor1</code> (Prescriber) • <code>admin</code> (Full)</p>
+    </form>
+  </div>
+
+  <div id="toastBox" class="toast" role="status" aria-live="polite"></div>
+
+  <header>
+    <div class="brand"><span class="dot"></span> DRIPGUARD AI — CLINICAL INFUSION MISSION CONTROL</div>
+    <div style="display:flex; align-items:center; gap:12px; font-size:0.82rem;">
+      <span id="userBadge" style="color:var(--muted);">Not signed in</span>
+      <button class="secondary" onclick="logout()">Sign Out</button>
+    </div>
+  </header>
+
+  <section class="ward-bar" aria-label="Ward Summary">
+    <div class="stat-pill"><span style="color:var(--muted);font-size:0.8rem;">Monitored Beds</span><strong id="sumBeds">0</strong></div>
+    <div class="stat-pill"><span style="color:var(--muted);font-size:0.8rem;">Active Infusions</span><strong id="sumRunning" style="color:var(--green);">0</strong></div>
+    <div class="stat-pill"><span style="color:var(--muted);font-size:0.8rem;">Open Clinical Alerts</span><strong id="sumAlerts" style="color:var(--red);">0</strong></div>
+    <div class="stat-pill"><span style="color:var(--muted);font-size:0.8rem;">Logged Drop Events</span><strong id="sumDrops" style="color:var(--accent);">0</strong></div>
+  </section>
+
+  <main class="grid">
+    <section class="card" aria-label="Ward Beds and Alerts">
+      <h2>Ward Beds &amp; Search</h2>
+      <label for="bedSearch" style="display:none;">Search Beds</label>
+      <input id="bedSearch" type="search" placeholder="Search bed, patient, MRN, fluid..." oninput="loadBeds()" />
+      <div class="row2">
+        <div>
+          <label for="wardFilter">Ward</label>
+          <select id="wardFilter" onchange="loadBeds()">
+            <option value="">All Wards</option>
+            <option value="ICU-A">ICU-A</option>
+            <option value="PICU-B">PICU-B</option>
+          </select>
+        </div>
+        <div>
+          <label for="sortOrder">Sort By</label>
+          <select id="sortOrder" onchange="loadBeds()">
+            <option value="bed_code">Bed Code</option>
+            <option value="prescribed_dpm">Target DPM</option>
+            <option value="updated_at">Last Updated</option>
+          </select>
+        </div>
+      </div>
+      <div id="bedList" style="display:flex; flex-direction:column; gap:8px; max-height:260px; overflow-y:auto;"></div>
+
+      <h2 style="margin-top:6px;">Active Safety Alerts</h2>
+      <div id="alertList" style="display:flex; flex-direction:column; gap:8px; max-height:210px; overflow-y:auto;">
+        <span style="font-size:0.8rem; color:var(--muted);">No unacknowledged alerts.</span>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Optical Feed">
+      <h2>Live Chamber Optical Feed</h2>
+      <div class="video-wrap">
+        <img id="liveFrame" alt="Live IV drip chamber optical telemetry stream" />
+        <div id="dropFlash" class="pulse-badge">+1 DROP</div>
+      </div>
+      <p style="font-size:0.75rem; color:var(--muted);">
+        <strong>Yellow:</strong> Scan ROI &nbsp;|&nbsp; <strong>Blue:</strong> Nozzle Corridor &nbsp;|&nbsp; <strong>Green:</strong> Tracked Drop
+      </p>
+    </section>
+
+    <section class="card" aria-label="Real-Time Telemetry">
+      <h2>Real-Time Telemetry — <span id="activeBedTitle" style="color:var(--text);">--</span></h2>
+      <div id="statusBox" class="status-banner status-MEASURING" role="status" aria-live="polite">
+        <div>
+          <div id="statusTitle" style="font-size:1.05rem;">MEASURING</div>
+          <div id="statusReason" style="font-size:0.78rem; font-weight:400;">Connecting...</div>
+        </div>
+        <div id="confBadge" style="font-size:0.75rem; padding:4px 8px; border-radius:6px; background:rgba(255,255,255,0.08);">CONF: NONE</div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-label">Total Drops</div><div class="kpi-val" id="kpiDrops">0</div></div>
+        <div class="kpi"><div class="kpi-label">Flow Rate (DPM)</div><div class="kpi-val" id="kpiDpm">--</div></div>
+        <div class="kpi"><div class="kpi-label">Infusion Rate (mL/hr)</div><div class="kpi-val" id="kpiMlHr">--</div></div>
+        <div class="kpi"><div class="kpi-label">Infused Volume (mL)</div><div class="kpi-val" id="kpiVol">0.00</div></div>
+      </div>
+
+      <div class="xai-box" id="xaiBox">
+        <strong>Explainable AI Rationale:</strong> Waiting for first droplet interval...
+      </div>
+
+      <h2>Flow Rate Stability (DPM)</h2>
+      <div class="chart-box"><canvas id="rateChart"></canvas></div>
+    </section>
+
+    <section class="card" aria-label="Bedside Controls">
+      <h2>Bedside Order &amp; ROI Calibration</h2>
+      <div>
+        <label for="videoSelect">Optical Source</label>
+        <select id="videoSelect"></select>
+      </div>
+      <div class="row2">
+        <div>
+          <label for="dropFactor">IV Tubing (gtt/mL)</label>
+          <select id="dropFactor">
+            <option value="20">20 (Macro Adult)</option>
+            <option value="60">60 (Micro Pediatric)</option>
+          </select>
+        </div>
+        <div>
+          <label for="prescribedDpm">Target Rate (DPM)</label>
+          <input id="prescribedDpm" type="number" min="1" max="300" placeholder="Blank = Observe" />
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <label for="targetVol">Bag Volume (mL)</label>
+          <input id="targetVol" type="number" value="500" min="10" max="5000" />
+        </div>
+        <div>
+          <label for="targetDur">Duration (min)</label>
+          <input id="targetDur" type="number" value="240" min="5" max="10080" />
+        </div>
+      </div>
+      <div>
+        <label for="roiInput">Chamber ROI [x0, y0, x1, y1]</label>
+        <input id="roiInput" type="text" />
+      </div>
+      <div>
+        <label for="corridorInput">Nozzle Corridor [x0, y0, x1, y1]</label>
+        <input id="corridorInput" type="text" />
+      </div>
+      <div class="row2">
+        <button type="button" onclick="checkConstraints()">Verify Safety</button>
+        <button type="button" onclick="applySettings()">Apply &amp; Sync</button>
+      </div>
+      <button type="button" class="secondary" onclick="resetCounter()">Reset Drop Counter</button>
+      <div id="constraintFeedback" style="font-size:0.78rem; color:var(--muted); line-height:1.4;"></div>
+    </section>
+  </main>
+
+  <script>
+    let token = '';
+    try { token = localStorage.getItem('dg_token') || ''; } catch (_) {}
+    let currentUser = null;
+    let beds = [];
+    let currentBed = null;
+    let presets = {};
+    let ws = null;
+    let summaryTimer = null;
+
+    const rateChart = new Chart(document.getElementById('rateChart').getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Live DPM', data: [], borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56, 189, 248, 0.15)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 2
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        scales: {
+          x: { ticks: { color: '#9ca3af', maxTicksLimit: 7 }, grid: { color: '#1f2937' } },
+          y: { ticks: { color: '#9ca3af' }, grid: { color: '#1f2937' }, beginAtZero: true }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    function showToast(msg, isError = false) {
+      const el = document.getElementById('toastBox');
+      el.textContent = msg;
+      el.className = isError ? 'toast error' : 'toast';
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; }, 4800);
+    }
+
+    async function apiFetch(url, opts = {}) {
+      opts.headers = Object.assign({}, opts.headers || {}, { Authorization: `Bearer ${token}` });
+      const res = await fetch(url, opts);
+      if (res.status === 401) {
+        logout();
+        throw new Error('Session expired');
+      }
+      return res;
+    }
+
+    async function handleLogin(e) {
+      if (e) e.preventDefault();
+      const errEl = document.getElementById('loginErr');
+      errEl.style.display = 'none';
+      const body = new URLSearchParams();
+      body.append('username', document.getElementById('loginUser').value.trim());
+      body.append('password', document.getElementById('loginPass').value);
+      try {
+        const res = await fetch('/api/auth/login', { method: 'POST', body });
+        if (!res.ok) {
+          errEl.textContent = 'Invalid username or password.';
+          errEl.style.display = 'block';
+          showToast('Invalid credentials', true);
+          return;
+        }
+        const data = await res.json();
+        token = data.access_token;
+        try { localStorage.setItem('dg_token', token); } catch (_) {}
+        await bootDashboard();
+      } catch (err) {
+        errEl.textContent = 'Connection error: ' + err.message;
+        errEl.style.display = 'block';
+      }
+    }
+
+    function logout() {
+      token = '';
+      try { localStorage.removeItem('dg_token'); } catch (_) {}
+      if (ws) ws.close();
+      if (summaryTimer) clearInterval(summaryTimer);
+      document.getElementById('loginModal').style.display = 'flex';
+    }
+
+    async function bootDashboard() {
+      if (!token) return;
+      try {
+        const meRes = await apiFetch('/api/auth/me');
+        if (!meRes.ok) return logout();
+        currentUser = await meRes.json();
+        document.getElementById('loginModal').style.display = 'none';
+        document.getElementById('userBadge').textContent = `${currentUser.full_name} (${currentUser.role.toUpperCase()})`;
+
+        const vRes = await apiFetch('/api/videos');
+        const vData = await vRes.json();
+        presets = vData.presets || {};
+        const sel = document.getElementById('videoSelect');
+        sel.innerHTML = '';
+        vData.videos.forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v; opt.textContent = `Sample: ${v}`;
+          sel.appendChild(opt);
+        });
+        const camOpt = document.createElement('option');
+        camOpt.value = 'webcam:0'; camOpt.textContent = 'Live Webcam (0)';
+        sel.appendChild(camOpt);
+
+        sel.onchange = () => {
+          for (const [key, cfg] of Object.entries(presets)) {
+            if (sel.value.includes(key)) {
+              document.getElementById('roiInput').value = cfg.roi.join(', ');
+              document.getElementById('corridorInput').value = cfg.corridor.join(', ');
+            }
+          }
+        };
+
+        await loadBeds(true);
+        await refreshSummaryAndAlerts();
+        if (summaryTimer) clearInterval(summaryTimer);
+        summaryTimer = setInterval(refreshSummaryAndAlerts, 5000);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function refreshSummaryAndAlerts() {
+      if (!token) return;
+      const sRes = await apiFetch('/api/ward/summary');
+      if (sRes.ok) {
+        const s = await sRes.json();
+        document.getElementById('sumBeds').textContent = s.total_beds;
+        document.getElementById('sumRunning').textContent = s.running_beds;
+        document.getElementById('sumAlerts').textContent = s.unacknowledged_alerts;
+        document.getElementById('sumDrops').textContent = s.logged_drop_events;
+      }
+      const aRes = await apiFetch('/api/alerts?acknowledged=false&limit=10');
+      if (aRes.ok) {
+        const alerts = await aRes.json();
+        const box = document.getElementById('alertList');
+        if (!alerts.length) {
+          box.innerHTML = '<span style="font-size:0.8rem; color:var(--muted);">No unacknowledged alerts.</span>';
+        } else {
+          box.innerHTML = alerts.map(a => `
+            <div class="alert-row">
+              <div><strong>${a.bed_code} • ${a.alert_type}</strong><br/>${a.message}</div>
+              <button class="danger" onclick="ackAlert(${a.id})">Ack</button>
+            </div>
+          `).join('');
+        }
+      }
+    }
+
+    async function ackAlert(id) {
+      await apiFetch(`/api/alerts/${id}/ack`, { method: 'POST' });
+      showToast('Alert acknowledged & logged in audit trail');
+      refreshSummaryAndAlerts();
+    }
+
+    async function loadBeds(autoSelectFirst = false) {
+      const q = encodeURIComponent(document.getElementById('bedSearch').value.trim());
+      const ward = encodeURIComponent(document.getElementById('wardFilter').value);
+      const sort = encodeURIComponent(document.getElementById('sortOrder').value);
+      const res = await apiFetch(`/api/beds?search=${q}&ward=${ward}&sort_by=${sort}`);
+      if (!res.ok) return;
+      beds = await res.json();
+
+      const list = document.getElementById('bedList');
+      list.innerHTML = '';
+      beds.forEach(b => {
+        const div = document.createElement('div');
+        div.className = 'bed-item' + (currentBed && currentBed.id === b.id ? ' active' : '');
+        div.tabIndex = 0;
+        div.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong>${b.bed_code} (${b.ward_name})</strong>
+            <span class="badge badge-${b.lifecycle_state}">${b.lifecycle_state}</span>
+          </div>
+          <div style="font-size:0.78rem;color:var(--muted);">${b.patient_name} • Target: ${b.prescribed_dpm ?? 'Obs'} DPM</div>
+        `;
+        div.onclick = () => selectBed(b);
+        div.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectBed(b); } };
+        list.appendChild(div);
+      });
+
+      if (autoSelectFirst && beds.length > 0) {
+        selectBed(beds[0]);
+      }
+    }
+
+    function populateBedForm(b) {
+      document.getElementById('activeBedTitle').textContent = `${b.bed_code} — ${b.patient_name} (v${b.version_id})`;
+      document.getElementById('videoSelect').value = b.video_source;
+      document.getElementById('dropFactor').value = String(b.drop_factor);
+      document.getElementById('prescribedDpm').value = b.prescribed_dpm ?? '';
+      document.getElementById('targetVol').value = b.target_volume_ml;
+      document.getElementById('targetDur').value = b.target_duration_min;
+      document.getElementById('roiInput').value = b.roi.join(', ');
+      document.getElementById('corridorInput').value = b.corridor.join(', ');
+    }
+
+    function selectBed(b) {
+      currentBed = b;
+      populateBedForm(b);
+      loadBeds(false);
+      rateChart.data.labels = [];
+      rateChart.data.datasets[0].data = [];
+      rateChart.update();
+      connectStream(b.id);
+    }
+
+    function connectStream(bedId) {
+      if (ws) ws.close();
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}/ws/stream/${bedId}?token=${encodeURIComponent(token)}`);
+
+      ws.onmessage = (ev) => {
+        const data = JSON.parse(ev.data);
+        if (data.type === 'bed_updated' && data.bed) {
+          currentBed = data.bed;
+          populateBedForm(data.bed);
+          loadBeds(false);
+          showToast(`Live sync: Bed updated by ${data.updated_by} (v${data.bed.version_id})`);
+          return;
+        }
+        if (data.error) {
+          document.getElementById('statusReason').textContent = data.error;
+          return;
+        }
+        if (data.frame) {
+          document.getElementById('liveFrame').src = 'data:image/jpeg;base64,' + data.frame;
+        }
+        const t = data.telemetry;
+        if (t) {
+          document.getElementById('kpiDrops').textContent = t.total_drops;
+          document.getElementById('kpiDpm').textContent = t.dpm !== null ? t.dpm.toFixed(1) : '--';
+          document.getElementById('kpiMlHr').textContent = t.ml_hr !== null ? t.ml_hr.toFixed(1) : '--';
+          document.getElementById('kpiVol').textContent = t.ml_infused.toFixed(2);
+          document.getElementById('confBadge').textContent = `CONF: ${t.confidence}`;
+
+          const sBox = document.getElementById('statusBox');
+          sBox.className = `status-banner status-${t.status}`;
+          document.getElementById('statusTitle').textContent = t.status;
+          document.getElementById('statusReason').textContent = t.reason;
+
+          if (t.xai) {
+            document.getElementById('xaiBox').innerHTML =
+              `<strong>Explainable AI (${t.xai.formula}):</strong> ${t.xai.action_required}`;
+          }
+
+          if (t.new_event) {
+            const flash = document.getElementById('dropFlash');
+            flash.classList.add('show');
+            setTimeout(() => flash.classList.remove('show'), 280);
+          }
+
+          if (t.dpm !== null && Math.round(t.t * 10) % 5 === 0) {
+            rateChart.data.labels.push(`${t.t.toFixed(1)}s`);
+            rateChart.data.datasets[0].data.push(t.dpm);
+            if (rateChart.data.labels.length > 35) {
+              rateChart.data.labels.shift();
+              rateChart.data.datasets[0].data.shift();
+            }
+            rateChart.update();
+          }
+        }
+      };
+    }
+
+    async function checkConstraints() {
+      if (!currentBed) return;
+      const rawDpm = document.getElementById('prescribedDpm').value.trim();
+      const res = await apiFetch('/api/clinical/validate-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prescribed_dpm: rawDpm === '' ? null : parseFloat(rawDpm),
+          drop_factor: parseFloat(document.getElementById('dropFactor').value),
+          target_volume_ml: parseFloat(document.getElementById('targetVol').value),
+          target_duration_min: parseFloat(document.getElementById('targetDur').value),
+          patient_id: currentBed.patient_id,
+        })
+      });
+      const data = await res.json();
+      const fb = document.getElementById('constraintFeedback');
+      fb.style.color = data.feasible ? 'var(--green)' : 'var(--red)';
+      fb.textContent = data.explanation + (data.recommended_adjustment ? ` Recommendation: ${data.recommended_adjustment}` : '');
+    }
+
+    async function applySettings() {
+      if (!currentBed) return;
+      const vid = document.getElementById('videoSelect').value;
+      const df = parseFloat(document.getElementById('dropFactor').value);
+      const rawDpm = document.getElementById('prescribedDpm').value.trim();
+      const pdpm = rawDpm === '' ? null : parseFloat(rawDpm);
+      const roi = document.getElementById('roiInput').value.split(',').map(Number);
+      const corridor = document.getElementById('corridorInput').value.split(',').map(Number);
+
+      const sourceChanged = vid !== currentBed.video_source;
+      const res = await apiFetch(`/api/beds/${currentBed.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video_source: vid,
+          drop_factor: df,
+          prescribed_dpm: pdpm,
+          clear_prescribed_dpm: pdpm === null,
+          target_volume_ml: parseFloat(document.getElementById('targetVol').value),
+          target_duration_min: parseFloat(document.getElementById('targetDur').value),
+          roi,
+          corridor,
+          version_id: currentBed.version_id,
+        })
+      });
+
+      const fb = document.getElementById('constraintFeedback');
+      if (res.ok) {
+        const updated = await res.json();
+        currentBed = updated;
+        populateBedForm(updated);
+        fb.style.color = 'var(--green)';
+        fb.textContent = `Order synced at v${updated.version_id}.`;
+        showToast(`Saved & synced across clients (v${updated.version_id})`);
+        if (sourceChanged) connectStream(currentBed.id);
+      } else if (res.status === 409) {
+        const err = await res.json();
+        const latest = err.detail.latest_bed;
+        currentBed = latest;
+        populateBedForm(latest);
+        fb.style.color = 'var(--amber)';
+        fb.textContent = err.detail.message;
+        showToast(err.detail.message, true);
+      } else {
+        const err = await res.json();
+        const msg = typeof err.detail === 'string'
+          ? err.detail
+          : `${err.detail.message || 'Constraint violation'}${err.detail.recommended_adjustment ? ' — ' + err.detail.recommended_adjustment : ''}`;
+        fb.style.color = 'var(--red)';
+        fb.textContent = msg;
+        showToast(msg, true);
+      }
+    }
+
+    function resetCounter() {
+      rateChart.data.labels = [];
+      rateChart.data.datasets[0].data = [];
+      rateChart.update();
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ action: 'reset' }));
+      }
+    }
+
+    if (token) bootDashboard();
+  </script>
+</body>
+</html>
