@@ -25,16 +25,27 @@
     .toast {
       position: fixed; bottom: 18px; right: 18px; background: #1e293b; border: 1px solid var(--accent);
       color: var(--text); padding: 12px 16px; border-radius: 10px; font-size: 0.85rem; z-index: 999;
-      display: none; max-width: 420px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); line-height: 1.4;
+      display: none; max-width: 460px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); line-height: 1.4;
     }
     .toast.error { border-color: var(--red); background: #2d1216; }
     .login-overlay {
-      position: fixed; inset: 0; background: rgba(7, 11, 22, 0.94); z-index: 1000;
-      display: flex; align-items: center; justify-content: center; padding: 16px;
+      position: fixed; inset: 0; background: rgba(7, 11, 22, 0.92); z-index: 1000;
+      display: flex; align-items: center; justify-content: center; padding: 16px; overflow-y: auto;
     }
     .login-box {
       background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-      padding: 28px; width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 14px;
+      padding: 20px; width: 100%; max-width: 490px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .field-hint {
+      font-size: 0.71rem; color: #7dd3fc; margin-top: 3px; line-height: 1.3;
+    }
+    .confirm-check-box {
+      display: flex; align-items: flex-start; gap: 8px;
+      background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.4);
+      padding: 8px 10px; border-radius: 8px; font-size: 0.75rem; color: #fde68a;
+    }
+    .confirm-check-box input[type="checkbox"] {
+      width: 16px; height: 16px; margin-top: 2px; accent-color: var(--green); cursor: pointer; flex-shrink: 0;
     }
     .ward-bar {
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 14px 22px 0;
@@ -45,7 +56,7 @@
       display: flex; justify-content: space-between; align-items: center;
     }
     .grid {
-      display: grid; grid-template-columns: 290px 360px 1fr 330px; gap: 16px;
+      display: grid; grid-template-columns: 310px 350px 1fr 345px; gap: 16px;
       padding: 16px 22px 24px; flex: 1;
     }
     @media (max-width: 1360px) { .grid { grid-template-columns: 1fr 1fr; } }
@@ -62,17 +73,23 @@
     .bed-item.active { border-color: var(--accent); background: rgba(56, 189, 248, 0.08); }
     .badge { font-size: 0.7rem; padding: 2px 7px; border-radius: 999px; font-weight: 700; }
     .badge-RUNNING { background: rgba(34,197,94,0.16); color: var(--green); }
+    .badge-VACANT { background: rgba(56,189,248,0.18); color: var(--accent); }
     .badge-ORDERED, .badge-PAUSED { background: rgba(245,158,11,0.16); color: var(--amber); }
     .badge-ALERT { background: rgba(239,68,68,0.2); color: var(--red); }
     .video-wrap {
       position: relative; width: 100%; background: #030712; border-radius: 10px;
       overflow: hidden; border: 1px solid var(--border); display: flex; justify-content: center;
+      cursor: crosshair; user-select: none;
     }
-    #liveFrame { width: 100%; max-height: 560px; object-fit: contain; display: block; }
+    #liveFrame { width: 100%; max-height: 560px; object-fit: contain; display: block; pointer-events: none; }
+    #dragSelectBox {
+      position: absolute; border: 2px dashed #38bdf8; background: rgba(56, 189, 248, 0.18);
+      display: none; pointer-events: none;
+    }
     .pulse-badge {
       position: absolute; top: 10px; right: 10px; background: var(--green); color: #052e16;
       font-weight: 800; padding: 4px 10px; border-radius: 999px; font-size: 0.78rem;
-      opacity: 0; transition: opacity 0.15s;
+      opacity: 0; transition: opacity 0.15s; pointer-events: none;
     }
     .pulse-badge.show { opacity: 1; }
     .kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
@@ -102,16 +119,28 @@
       padding: 9px 12px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer;
       background: var(--accent); color: #082f49; font-size: 0.85rem;
     }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
     button.secondary { background: #1f2937; color: var(--text); }
+    button.warning { background: rgba(245,158,11,0.2); color: #fcd34d; border: 1px solid rgba(245,158,11,0.45); }
     button.danger { background: rgba(239,68,68,0.2); color: #fca5a5; border: 1px solid rgba(239,68,68,0.4); }
+    button.sm { padding: 5px 9px; font-size: 0.74rem; }
     .chart-box { height: 190px; position: relative; }
     .alert-row {
       background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.35);
       border-radius: 8px; padding: 8px 10px; font-size: 0.78rem; display: flex; justify-content: space-between; align-items: center; gap: 8px;
     }
+    .archive-row {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 7px 10px; font-size: 0.75rem; display: flex; justify-content: space-between; align-items: center; gap: 6px;
+    }
+    .upload-box {
+      background: var(--card); border: 1px dashed #334155; border-radius: 9px; padding: 10px;
+      display: flex; flex-direction: column; gap: 7px;
+    }
   </style>
 </head>
 <body>
+  <!-- Sign-In Modal -->
   <div id="loginModal" class="login-overlay" role="dialog" aria-labelledby="loginHeading">
     <form class="login-box" onsubmit="handleLogin(event)">
       <div class="brand" id="loginHeading"><span class="dot"></span> DripGuard AI Clinical Sign-In</div>
@@ -126,7 +155,144 @@
       </div>
       <button type="submit" onclick="handleLogin(event)">Sign In to Mission Control</button>
       <p id="loginErr" style="font-size:0.78rem; color:var(--red); display:none;"></p>
-      <p style="font-size:0.75rem; color:var(--muted);">Roles: <code>nurse1</code> (Bedside) • <code>doctor1</code> (Prescriber) • <code>admin</code> (Full)</p>
+      <p style="font-size:0.75rem; color:var(--muted);">
+        Roles: <code>nurse1</code> • <code>doctor1</code> • <code>admin</code><br/>
+        Discharge / Deletion Security Code (Clinicians Only): <code>DG-SEC-2026</code>
+      </p>
+    </form>
+  </div>
+
+  <!-- Add New Bed OR Admit to Vacant Bed Modal -->
+  <div id="addBedModal" class="login-overlay" style="display:none;" role="dialog" aria-labelledby="addBedHeading">
+    <form class="login-box" onsubmit="submitNewBed(event)">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="brand" id="addBedHeading"><span class="dot"></span> Admit Patient &amp; Assign Video</div>
+        <button type="button" class="secondary sm" onclick="closeAddBedModal()">✕</button>
+      </div>
+      <p style="font-size:0.75rem; color:var(--muted);">
+        You can assign a <strong>VACANT</strong> existing bed (e.g. BED-02) or create a new bed (e.g. BED-07). Occupied beds must be discharged first.
+      </p>
+
+      <div id="vacantBedPickerWrap" style="display:none;">
+        <label for="vacantBedQuickSelect" style="color:var(--green);">Quick-Fill Vacant Bed Slot (Optional)</label>
+        <select id="vacantBedQuickSelect" onchange="applyVacantBedSelection()"></select>
+      </div>
+
+      <div class="row2">
+        <div>
+          <label for="newBedCode">Bed Code *</label>
+          <input id="newBedCode" type="text" placeholder="e.g. BED-07" required />
+          <div class="field-hint">Format: <strong>BED-07</strong> (new or vacant bed)</div>
+        </div>
+        <div>
+          <label for="newBedWard">Ward *</label>
+          <select id="newBedWard">
+            <option value="ICU-A">ICU-A</option>
+            <option value="PICU-B">PICU-B</option>
+            <option value="CCU-1">CCU-1</option>
+            <option value="MED-W2">MED-W2</option>
+          </select>
+          <div class="field-hint">Select assigned hospital ward</div>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div>
+          <label for="newPatientName">Patient Full Name *</label>
+          <input id="newPatientName" type="text" placeholder="e.g. Tanvir Ahmed" required />
+          <div class="field-hint">Format: Full name (e.g. Tanvir Ahmed)</div>
+        </div>
+        <div>
+          <label for="newPatientMrn">Patient MRN *</label>
+          <input id="newPatientMrn" type="text" placeholder="e.g. MRN-1007" required />
+          <div class="field-hint">Format: <strong>MRN-1007</strong> (unique ID)</div>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div>
+          <label for="newPatientAge">Patient Age (Years) *</label>
+          <input id="newPatientAge" type="number" value="45" min="0" max="120" placeholder="e.g. 45" required />
+          <div class="field-hint">Example: 45 (0–120 years)</div>
+        </div>
+        <div>
+          <label for="newPatientWeight">Patient Weight (kg) *</label>
+          <input id="newPatientWeight" type="number" step="0.5" value="65" min="1" max="300" placeholder="e.g. 65" required />
+          <div class="field-hint">Example: 65 (for safety validation)</div>
+        </div>
+      </div>
+
+      <div>
+        <label for="newBedFluid">IV Fluid Type *</label>
+        <input id="newBedFluid" type="text" value="Normal Saline 0.9% (500 mL)" placeholder="e.g. Normal Saline 0.9% (500 mL)" required />
+        <div class="field-hint">Example: Normal Saline 0.9% (500 mL)</div>
+      </div>
+
+      <div class="row2">
+        <div>
+          <label for="newBedDropFactor">Drop Factor (gtt/mL) *</label>
+          <select id="newBedDropFactor">
+            <option value="20">20 (Macro Adult)</option>
+            <option value="60">60 (Micro Pediatric)</option>
+          </select>
+          <div class="field-hint">20 = Adult Macro, 60 = Pediatric</div>
+        </div>
+        <div>
+          <label for="newBedDpm">Target Rate (DPM) *</label>
+          <input id="newBedDpm" type="number" value="60" min="1" max="300" placeholder="e.g. 60" required />
+          <div class="field-hint">Format: Number only (e.g. 60)</div>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div>
+          <label for="newBedVol">Bag Volume (mL) *</label>
+          <input id="newBedVol" type="number" value="500" min="10" max="5000" placeholder="e.g. 500" required />
+          <div class="field-hint">Example: 500 (10–5000 mL)</div>
+        </div>
+        <div>
+          <label for="newBedDur">Duration (min) *</label>
+          <input id="newBedDur" type="number" value="165" min="5" max="10080" placeholder="e.g. 165" required />
+          <div class="field-hint">Example: 165 min</div>
+        </div>
+      </div>
+
+      <div class="upload-box">
+        <label for="newBedVideoFile" style="color:var(--accent); font-weight:600; margin:0;">
+          Assign New Video * (e.g. [BED-07] 12076506_1080_1920_60fps.mp4)
+        </label>
+        <input id="newBedVideoFile" type="file" accept=".mp4,video/mp4" required onchange="onModalFileSelected()" style="font-size:0.78rem; padding:6px;" />
+        <div id="modalSelectedFileInfo" class="field-hint">Must end with <strong>.mp4</strong> extension (otherwise rejected).</div>
+        <label class="confirm-check-box" for="modalVerifyVideoCheck">
+          <input id="modalVerifyVideoCheck" type="checkbox" />
+          <span>Tick to confirm you selected the <strong>correct IV chamber .mp4 video</strong> for this bed (prevents accidental wrong upload).</span>
+        </label>
+      </div>
+
+      <div class="row2" style="margin-top:4px;">
+        <button type="button" class="secondary" onclick="closeAddBedModal()">Cancel</button>
+        <button type="submit" id="createBedSubmitBtn">Admit &amp; Upload Video</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Security Code Protected Discharge / Delete Confirmation Modal -->
+  <div id="securityDeleteModal" class="login-overlay" style="display:none;" role="dialog" aria-labelledby="secDelHeading">
+    <form class="login-box" onsubmit="confirmSecureDelete(event)">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="brand" id="secDelHeading" style="color:var(--amber);">🔒 Clinician Security Verification</div>
+        <button type="button" class="secondary sm" onclick="closeSecurityDeleteModal()">✕</button>
+      </div>
+      <p id="secDelSummary" style="font-size:0.82rem; color:var(--text); line-height:1.45;"></p>
+      <div>
+        <label for="secCodeInput">Enter Clinician Security Code *</label>
+        <input id="secCodeInput" type="password" placeholder="e.g. DG-SEC-2026" required autocomplete="off" />
+        <div class="field-hint">Only authorized Nurses, Doctors, or Admins know this code.</div>
+      </div>
+      <div class="row2" style="margin-top:4px;">
+        <button type="button" class="secondary" onclick="closeSecurityDeleteModal()">Cancel</button>
+        <button type="submit" class="danger" id="secDelConfirmBtn">Confirm &amp; Archive PDF</button>
+      </div>
     </form>
   </div>
 
@@ -149,7 +315,14 @@
 
   <main class="grid">
     <section class="card" aria-label="Ward Beds and Alerts">
-      <h2>Ward Beds &amp; Search</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:4px; flex-wrap:wrap;">
+        <h2>Ward Beds</h2>
+        <div style="display:flex; gap:5px;">
+          <button type="button" class="sm" onclick="openAddBedModal()">+ Admit / Add</button>
+          <button type="button" class="warning sm" onclick="promptDischargeSelectedBed()">Discharge</button>
+          <button type="button" class="danger sm" onclick="promptDeleteSelectedBed()">Delete</button>
+        </div>
+      </div>
       <label for="bedSearch" style="display:none;">Search Beds</label>
       <input id="bedSearch" type="search" placeholder="Search bed, patient, MRN, fluid..." oninput="loadBeds()" />
       <div class="row2">
@@ -159,6 +332,8 @@
             <option value="">All Wards</option>
             <option value="ICU-A">ICU-A</option>
             <option value="PICU-B">PICU-B</option>
+            <option value="CCU-1">CCU-1</option>
+            <option value="MED-W2">MED-W2</option>
           </select>
         </div>
         <div>
@@ -170,22 +345,29 @@
           </select>
         </div>
       </div>
-      <div id="bedList" style="display:flex; flex-direction:column; gap:8px; max-height:260px; overflow-y:auto;"></div>
+      <div id="bedList" style="display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto;"></div>
 
-      <h2 style="margin-top:6px;">Active Safety Alerts</h2>
-      <div id="alertList" style="display:flex; flex-direction:column; gap:8px; max-height:210px; overflow-y:auto;">
+      <h2 style="margin-top:4px;">Active Safety Alerts</h2>
+      <div id="alertList" style="display:flex; flex-direction:column; gap:8px; max-height:130px; overflow-y:auto;">
         <span style="font-size:0.8rem; color:var(--muted);">No unacknowledged alerts.</span>
+      </div>
+
+      <h2 style="margin-top:4px;">Certified PDF Discharge Archives</h2>
+      <div id="archiveList" style="display:flex; flex-direction:column; gap:6px; max-height:140px; overflow-y:auto;">
+        <span style="font-size:0.78rem; color:var(--muted);">No archived PDFs yet.</span>
       </div>
     </section>
 
     <section class="card" aria-label="Optical Feed">
       <h2>Live Chamber Optical Feed</h2>
-      <div class="video-wrap">
+      <div class="video-wrap" id="videoWrap">
         <img id="liveFrame" alt="Live IV drip chamber optical telemetry stream" />
+        <div id="dragSelectBox"></div>
         <div id="dropFlash" class="pulse-badge">+1 DROP</div>
       </div>
-      <p style="font-size:0.75rem; color:var(--muted);">
-        <strong>Yellow:</strong> Scan ROI &nbsp;|&nbsp; <strong>Blue:</strong> Nozzle Corridor &nbsp;|&nbsp; <strong>Green:</strong> Tracked Drop
+      <p style="font-size:0.75rem; color:var(--muted); line-height:1.4;">
+        <strong>Yellow:</strong> Wide Search Zone &nbsp;|&nbsp; <strong>Blue:</strong> Auto-Tracking Chamber Lock &nbsp;|&nbsp; <strong>Green:</strong> Tracked Drop<br/>
+        <span style="color:#7dd3fc;">Tip: Drag your mouse directly over the IV chamber above to calibrate the box instantly.</span>
       </p>
     </section>
 
@@ -216,8 +398,25 @@
 
     <section class="card" aria-label="Bedside Controls">
       <h2>Bedside Order &amp; ROI Calibration</h2>
+
+      <div class="upload-box">
+        <label for="bedVideoUpload" style="color:var(--accent); font-weight:600; margin:0;">
+          Assign New Video (e.g. [<span id="uploadTargetBedLabel">BED-07</span>] 12076506_1080_1920_60fps.mp4)
+        </label>
+        <input id="bedVideoUpload" type="file" accept=".mp4,video/mp4" onchange="onSideFileSelected()" style="font-size:0.78rem; padding:6px;" />
+        <div id="sideSelectedFileInfo" class="field-hint" style="margin:0;">Must end with <strong>.mp4</strong> extension; binds 1:1 to selected bed.</div>
+        <label class="confirm-check-box" for="sideVerifyVideoCheck">
+          <input id="sideVerifyVideoCheck" type="checkbox" />
+          <span>Tick to confirm this is the <strong>correct .mp4 video</strong> before uploading.</span>
+        </label>
+        <button type="button" id="uploadVideoBtn" class="sm" onclick="uploadVideoForSelectedBed()">Upload &amp; Bind to Bed</button>
+      </div>
+
       <div>
-        <label for="videoSelect">Optical Source</label>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <label for="videoSelect" style="margin:0;">Optical Source (1:1 Bed Synced)</label>
+          <button type="button" class="danger sm" onclick="promptDeleteSelectedVideo()">Delete Video</button>
+        </div>
         <select id="videoSelect"></select>
       </div>
       <div class="row2">
@@ -251,6 +450,10 @@
         <label for="corridorInput">Nozzle Corridor [x0, y0, x1, y1]</label>
         <input id="corridorInput" type="text" />
       </div>
+      <label class="confirm-check-box" for="autoTrackCheck" style="background:rgba(56,189,248,0.08); border-color:rgba(56,189,248,0.35); color:#bae6fd;">
+        <input id="autoTrackCheck" type="checkbox" checked />
+        <span><strong>Dynamic Auto-Follow Chamber:</strong> Automatically tracks swaying IV chamber box in real time.</span>
+      </label>
       <div class="row2">
         <button type="button" onclick="checkConstraints()">Verify Safety</button>
         <button type="button" onclick="applySettings()">Apply &amp; Sync</button>
@@ -267,8 +470,75 @@
     let beds = [];
     let currentBed = null;
     let presets = {};
+    let videoBedMap = {};
     let ws = null;
     let summaryTimer = null;
+    let pendingDeleteAction = null;
+
+    // Interactive mouse drag-to-draw ROI & Corridor on live video feed
+    let isDraggingBox = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    const videoWrapEl = document.getElementById('videoWrap');
+    const dragBoxEl = document.getElementById('dragSelectBox');
+
+    videoWrapEl.addEventListener('mousedown', (e) => {
+      if (!currentBed || currentBed.lifecycle_state === 'VACANT') return;
+      const rect = videoWrapEl.getBoundingClientRect();
+      isDraggingBox = true;
+      dragStartX = e.clientX - rect.left;
+      dragStartY = e.clientY - rect.top;
+      dragBoxEl.style.left = dragStartX + 'px';
+      dragBoxEl.style.top = dragStartY + 'px';
+      dragBoxEl.style.width = '0px';
+      dragBoxEl.style.height = '0px';
+      dragBoxEl.style.display = 'block';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingBox) return;
+      const rect = videoWrapEl.getBoundingClientRect();
+      const curX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const curY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      const left = Math.min(dragStartX, curX);
+      const top = Math.min(dragStartY, curY);
+      const width = Math.abs(curX - dragStartX);
+      const height = Math.abs(curY - dragStartY);
+      dragBoxEl.style.left = left + 'px';
+      dragBoxEl.style.top = top + 'px';
+      dragBoxEl.style.width = width + 'px';
+      dragBoxEl.style.height = height + 'px';
+    });
+
+    window.addEventListener('mouseup', async (e) => {
+      if (!isDraggingBox) return;
+      isDraggingBox = false;
+      dragBoxEl.style.display = 'none';
+      const rect = videoWrapEl.getBoundingClientRect();
+      const endX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const endY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+
+      const x0 = +(Math.min(dragStartX, endX) / rect.width).toFixed(3);
+      const y0 = +(Math.min(dragStartY, endY) / rect.height).toFixed(3);
+      const x1 = +(Math.max(dragStartX, endX) / rect.width).toFixed(3);
+      const y1 = +(Math.max(dragStartY, endY) / rect.height).toFixed(3);
+
+      if (x1 - x0 < 0.06 || y1 - y0 < 0.08) return; // Ignore tiny accidental clicks
+
+      // Set wide search ROI around drawn chamber and centered corridor inside it
+      const padX = 0.08;
+      const padY = 0.08;
+      const wideRoi = [
+        +Math.max(0.02, x0 - padX).toFixed(3),
+        +Math.max(0.02, y0 - padY).toFixed(3),
+        +Math.min(0.98, x1 + padX).toFixed(3),
+        +Math.min(0.98, y1 + padY).toFixed(3),
+      ];
+      document.getElementById('roiInput').value = wideRoi.join(', ');
+      document.getElementById('corridorInput').value = '0.15, 0.10, 0.85, 0.90';
+      await applySettings();
+      showToast('Chamber locked & synced from mouse selection!');
+    });
 
     const rateChart = new Chart(document.getElementById('rateChart').getContext('2d'), {
       type: 'line',
@@ -294,7 +564,7 @@
       el.textContent = msg;
       el.className = isError ? 'toast error' : 'toast';
       el.style.display = 'block';
-      setTimeout(() => { el.style.display = 'none'; }, 4800);
+      setTimeout(() => { el.style.display = 'none'; }, 5500);
     }
 
     async function apiFetch(url, opts = {}) {
@@ -340,6 +610,71 @@
       document.getElementById('loginModal').style.display = 'flex';
     }
 
+    async function refreshVideoDropdown() {
+      const vRes = await apiFetch('/api/videos');
+      if (!vRes.ok) return;
+      const vData = await vRes.json();
+      presets = vData.presets || {};
+      videoBedMap = vData.video_bed_map || {};
+
+      const sel = document.getElementById('videoSelect');
+      sel.innerHTML = '';
+      vData.videos.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        const assignedBed = videoBedMap[v] ? `[${videoBedMap[v]}] ` : '';
+        opt.textContent = `${assignedBed}${v}`;
+        sel.appendChild(opt);
+      });
+      const camOpt = document.createElement('option');
+      camOpt.value = 'webcam:0'; camOpt.textContent = 'Live Webcam (0)';
+      sel.appendChild(camOpt);
+      if (currentBed) {
+        sel.value = currentBed.video_source;
+      }
+    }
+
+    async function refreshArchivesList() {
+      const res = await apiFetch('/api/archives');
+      if (!res.ok) return;
+      const files = await res.json();
+      const box = document.getElementById('archiveList');
+      if (!files.length) {
+        box.innerHTML = '<span style="font-size:0.78rem; color:var(--muted);">No archived PDFs yet.</span>';
+        return;
+      }
+      box.innerHTML = files.map(f => `
+        <div class="archive-row">
+          <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${f.filename}">
+            <strong>${f.filename}</strong><br/>
+            <span style="color:var(--muted);">${f.size_kb} KB</span>
+          </div>
+          <button type="button" class="secondary sm" onclick="downloadArchivePdf('${f.filename}')">PDF ↓</button>
+        </div>
+      `).join('');
+    }
+
+    async function downloadArchivePdf(filename) {
+      try {
+        const res = await apiFetch(`/api/archives/${encodeURIComponent(filename)}`);
+        if (!res.ok) {
+          showToast('Could not download archive PDF', true);
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showToast('Download error: ' + err.message, true);
+      }
+    }
+
     async function bootDashboard() {
       if (!token) return;
       try {
@@ -349,23 +684,29 @@
         document.getElementById('loginModal').style.display = 'none';
         document.getElementById('userBadge').textContent = `${currentUser.full_name} (${currentUser.role.toUpperCase()})`;
 
-        const vRes = await apiFetch('/api/videos');
-        const vData = await vRes.json();
-        presets = vData.presets || {};
-        const sel = document.getElementById('videoSelect');
-        sel.innerHTML = '';
-        vData.videos.forEach(v => {
-          const opt = document.createElement('option');
-          opt.value = v; opt.textContent = `Sample: ${v}`;
-          sel.appendChild(opt);
-        });
-        const camOpt = document.createElement('option');
-        camOpt.value = 'webcam:0'; camOpt.textContent = 'Live Webcam (0)';
-        sel.appendChild(camOpt);
+        await refreshVideoDropdown();
 
-        sel.onchange = () => {
+        const sel = document.getElementById('videoSelect');
+        sel.onchange = async () => {
+          const selectedVid = sel.value;
+          if (selectedVid === 'webcam:0') return;
+
+          let matchedBed = beds.find(b => b.video_source === selectedVid && b.lifecycle_state !== 'VACANT');
+          if (!matchedBed) {
+            try {
+              const lookupRes = await apiFetch(`/api/beds/by-video/${encodeURIComponent(selectedVid)}`);
+              if (lookupRes.ok) matchedBed = await lookupRes.json();
+            } catch (_) {}
+          }
+
+          if (matchedBed && (!currentBed || matchedBed.id !== currentBed.id)) {
+            selectBed(matchedBed);
+            showToast(`Switched to ${matchedBed.bed_code} (${matchedBed.patient_name}) for selected feed`);
+            return;
+          }
+
           for (const [key, cfg] of Object.entries(presets)) {
-            if (sel.value.includes(key)) {
+            if (selectedVid.includes(key)) {
               document.getElementById('roiInput').value = cfg.roi.join(', ');
               document.getElementById('corridorInput').value = cfg.corridor.join(', ');
             }
@@ -374,10 +715,379 @@
 
         await loadBeds(true);
         await refreshSummaryAndAlerts();
+        await refreshArchivesList();
         if (summaryTimer) clearInterval(summaryTimer);
         summaryTimer = setInterval(refreshSummaryAndAlerts, 5000);
       } catch (err) {
         console.error(err);
+      }
+    }
+
+    function onModalFileSelected() {
+      const f = document.getElementById('newBedVideoFile').files[0];
+      const info = document.getElementById('modalSelectedFileInfo');
+      document.getElementById('modalVerifyVideoCheck').checked = false;
+      if (!f) {
+        info.innerHTML = 'Must end with <strong>.mp4</strong> extension (otherwise rejected).';
+        return;
+      }
+      const mb = (f.size / (1024 * 1024)).toFixed(2);
+      info.innerHTML = `Selected: <strong>${f.name}</strong> (${mb} MB) — tick confirmation box below.`;
+    }
+
+    function onSideFileSelected() {
+      const f = document.getElementById('bedVideoUpload').files[0];
+      const info = document.getElementById('sideSelectedFileInfo');
+      document.getElementById('sideVerifyVideoCheck').checked = false;
+      if (!f) {
+        info.innerHTML = 'Must end with <strong>.mp4</strong> extension; binds 1:1 to selected bed.';
+        return;
+      }
+      const mb = (f.size / (1024 * 1024)).toFixed(2);
+      info.innerHTML = `Selected: <strong>${f.name}</strong> (${mb} MB) — tick confirmation box below.`;
+    }
+
+    function applyVacantBedSelection() {
+      const val = document.getElementById('vacantBedQuickSelect').value;
+      if (!val) return;
+      const vBed = beds.find(b => b.bed_code === val);
+      if (vBed) {
+        document.getElementById('newBedCode').value = vBed.bed_code;
+        document.getElementById('newBedWard').value = vBed.ward_name;
+      }
+    }
+
+    function openAddBedModal() {
+      const vacantBeds = beds.filter(b => b.lifecycle_state === 'VACANT');
+      const pickerWrap = document.getElementById('vacantBedPickerWrap');
+      const pickerSel = document.getElementById('vacantBedQuickSelect');
+
+      if (vacantBeds.length > 0) {
+        pickerWrap.style.display = 'block';
+        pickerSel.innerHTML = `<option value="">-- Create Brand New Bed Slot --</option>` +
+          vacantBeds.map(vb => `<option value="${vb.bed_code}">Re-use Vacant ${vb.bed_code} (${vb.ward_name})</option>`).join('');
+        document.getElementById('newBedCode').value = vacantBeds[0].bed_code;
+        document.getElementById('newBedWard').value = vacantBeds[0].ward_name;
+      } else {
+        pickerWrap.style.display = 'none';
+        const nextNum = String(beds.length + 1).padStart(2, '0');
+        document.getElementById('newBedCode').value = `BED-${nextNum}`;
+      }
+
+      document.getElementById('newPatientName').value = '';
+      document.getElementById('newPatientMrn').value = `MRN-${1001 + beds.length + Math.floor(Math.random() * 90)}`;
+      document.getElementById('newPatientAge').value = '45';
+      document.getElementById('newPatientWeight').value = '65';
+      document.getElementById('newBedDpm').value = '60';
+      document.getElementById('newBedVideoFile').value = '';
+      document.getElementById('modalVerifyVideoCheck').checked = false;
+      document.getElementById('modalSelectedFileInfo').innerHTML = 'Must end with <strong>.mp4</strong> extension (otherwise rejected).';
+      document.getElementById('addBedModal').style.display = 'flex';
+    }
+
+    function closeAddBedModal() {
+      document.getElementById('addBedModal').style.display = 'none';
+    }
+
+    async function submitNewBed(e) {
+      e.preventDefault();
+
+      const bedCode = document.getElementById('newBedCode').value.trim().toUpperCase();
+      if (!/^BED-\d{2,3}$/.test(bedCode)) {
+        showToast('Rejected: Bed Code must follow format BED-07 (with hyphen, no spaces).', true);
+        return;
+      }
+
+      const patientName = document.getElementById('newPatientName').value.trim();
+      if (patientName.length < 2) {
+        showToast('Rejected: Enter Patient Full Name (e.g. Tanvir Ahmed).', true);
+        return;
+      }
+
+      const patientMrn = document.getElementById('newPatientMrn').value.trim().toUpperCase();
+      if (!/^MRN-\d{3,6}$/.test(patientMrn)) {
+        showToast('Rejected: Patient MRN must follow format MRN-1007.', true);
+        return;
+      }
+
+      const dpmVal = parseFloat(document.getElementById('newBedDpm').value);
+      if (isNaN(dpmVal) || dpmVal <= 0 || dpmVal > 300) {
+        showToast('Rejected: Target Rate must be a number between 1 and 300 (e.g. 60).', true);
+        return;
+      }
+
+      const vidInput = document.getElementById('newBedVideoFile');
+      if (!vidInput.files || vidInput.files.length === 0) {
+        showToast('Rejected: Please select an .mp4 video file to assign to this bed.', true);
+        return;
+      }
+      const chosenFile = vidInput.files[0];
+      if (!chosenFile.name.toLowerCase().endsWith('.mp4')) {
+        showToast('Rejected: Video file must end with .mp4 extension (e.g. 12076506_1080_1920_60fps.mp4).', true);
+        return;
+      }
+      if (!document.getElementById('modalVerifyVideoCheck').checked) {
+        showToast('Please tick the confirmation checkbox to verify you selected the right video!', true);
+        return;
+      }
+
+      const btn = document.getElementById('createBedSubmitBtn');
+      btn.disabled = true;
+      btn.textContent = 'Admitting & Uploading...';
+
+      try {
+        const ageVal = parseInt(document.getElementById('newPatientAge').value, 10);
+        const weightVal = parseFloat(document.getElementById('newPatientWeight').value);
+
+        const pRes = await apiFetch('/api/patients', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mrn: patientMrn,
+            full_name: patientName,
+            age_years: ageVal,
+            weight_kg: weightVal,
+            is_pediatric: ageVal < 12,
+            ward_notes: `Admitted to ${bedCode}`,
+          }),
+        });
+
+        if (!pRes.ok) {
+          const pErr = await pRes.json();
+          showToast(pErr.detail || 'Could not register patient (check MRN)', true);
+          return;
+        }
+        const createdPatient = await pRes.json();
+
+        const bedRes = await apiFetch('/api/beds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bed_code: bedCode,
+            ward_name: document.getElementById('newBedWard').value,
+            patient_id: createdPatient.id,
+            fluid_type: document.getElementById('newBedFluid').value.trim(),
+            drop_factor: parseFloat(document.getElementById('newBedDropFactor').value),
+            prescribed_dpm: dpmVal,
+            target_volume_ml: parseFloat(document.getElementById('newBedVol').value),
+            target_duration_min: parseFloat(document.getElementById('newBedDur').value),
+          }),
+        });
+
+        if (!bedRes.ok) {
+          const err = await bedRes.json();
+          const msg = typeof err.detail === 'string' ? err.detail : (err.detail.message || 'Could not assign bed');
+          showToast(msg, true);
+          return;
+        }
+        const createdBed = await bedRes.json();
+
+        const formData = new FormData();
+        formData.append('file', chosenFile);
+        const upRes = await apiFetch(`/api/beds/${createdBed.id}/upload-video`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        const finalBed = upRes.ok ? await upRes.json() : createdBed;
+
+        closeAddBedModal();
+        await refreshVideoDropdown();
+        await loadBeds(false);
+        selectBed(finalBed);
+        refreshSummaryAndAlerts();
+        showToast(`${finalBed.bed_code} (${patientName}) & [${finalBed.bed_code}] ${finalBed.video_source} synced!`);
+      } catch (err) {
+        showToast('Error: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Admit & Upload Video';
+      }
+    }
+
+    async function uploadVideoForSelectedBed() {
+      if (!currentBed) return;
+      const fileInput = document.getElementById('bedVideoUpload');
+      if (!fileInput.files || fileInput.files.length === 0) {
+        showToast('Please select an .mp4 video file first.', true);
+        return;
+      }
+      if (!fileInput.files[0].name.toLowerCase().endsWith('.mp4')) {
+        showToast('Rejected: Video file must end with .mp4 extension.', true);
+        return;
+      }
+      if (!document.getElementById('sideVerifyVideoCheck').checked) {
+        showToast('Please tick the confirmation checkbox first to verify you uploaded the right video!', true);
+        return;
+      }
+
+      const btn = document.getElementById('uploadVideoBtn');
+      btn.disabled = true;
+      btn.textContent = 'Uploading...';
+
+      try {
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        const res = await apiFetch(`/api/beds/${currentBed.id}/upload-video`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (res.ok) {
+          const updatedBed = await res.json();
+          fileInput.value = '';
+          document.getElementById('sideVerifyVideoCheck').checked = false;
+          document.getElementById('sideSelectedFileInfo').innerHTML = 'Must end with <strong>.mp4</strong> extension; binds 1:1 to selected bed.';
+          await refreshVideoDropdown();
+          await loadBeds(false);
+          selectBed(updatedBed);
+          showToast(`Synced: [${updatedBed.bed_code}] ${updatedBed.video_source}`);
+        } else {
+          const err = await res.json();
+          showToast(err.detail || 'Video upload failed', true);
+        }
+      } catch (err) {
+        showToast('Upload error: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Upload & Bind to Bed';
+      }
+    }
+
+    function promptDischargeSelectedBed() {
+      if (!currentBed) {
+        showToast('Select a bed first to discharge.', true);
+        return;
+      }
+      if (currentBed.lifecycle_state === 'VACANT') {
+        showToast(`${currentBed.bed_code} is already VACANT and ready for a new patient.`, true);
+        return;
+      }
+      pendingDeleteAction = { type: 'discharge', id: currentBed.id, name: `${currentBed.bed_code} (${currentBed.patient_name})` };
+      document.getElementById('secDelHeading').textContent = '📋 Discharge Patient & Archive PDF';
+      document.getElementById('secDelConfirmBtn').textContent = 'Discharge & Download PDF';
+      document.getElementById('secDelSummary').innerHTML =
+        `Discharge <strong>${pendingDeleteAction.name}</strong>? A certified <strong>PDF Discharge Summary</strong> (with infusion & video metadata) will be archived and downloaded, and <strong>${currentBed.bed_code}</strong> will become <strong>VACANT</strong> for a new patient.`;
+      document.getElementById('secCodeInput').value = '';
+      document.getElementById('securityDeleteModal').style.display = 'flex';
+    }
+
+    function promptDeleteSelectedBed() {
+      if (!currentBed) {
+        showToast('Select a bed first to delete.', true);
+        return;
+      }
+      pendingDeleteAction = { type: 'bed', id: currentBed.id, name: `${currentBed.bed_code} (${currentBed.patient_name})` };
+      document.getElementById('secDelHeading').textContent = '🔒 Archive PDF & Delete Bed';
+      document.getElementById('secDelConfirmBtn').textContent = 'Archive PDF & Delete Bed';
+      document.getElementById('secDelSummary').innerHTML =
+        `Permanently close & delete <strong>${pendingDeleteAction.name}</strong>? Its full clinical & video record will first be archived into a <strong>PDF report</strong> before removal from the active database.`;
+      document.getElementById('secCodeInput').value = '';
+      document.getElementById('securityDeleteModal').style.display = 'flex';
+    }
+
+    function promptDeleteSelectedVideo() {
+      const vid = document.getElementById('videoSelect').value;
+      if (!vid || vid.startsWith('webcam:')) {
+        showToast('Select a valid .mp4 video file from the dropdown to delete.', true);
+        return;
+      }
+      pendingDeleteAction = { type: 'video', name: vid };
+      document.getElementById('secDelHeading').textContent = '🔒 Delete Optical Video File';
+      document.getElementById('secDelConfirmBtn').textContent = 'Confirm Video Delete';
+      document.getElementById('secDelSummary').innerHTML =
+        `Permanently delete video <strong>${vid}</strong> from storage and detach it from database bed assignments?`;
+      document.getElementById('secCodeInput').value = '';
+      document.getElementById('securityDeleteModal').style.display = 'flex';
+    }
+
+    function closeSecurityDeleteModal() {
+      pendingDeleteAction = null;
+      document.getElementById('securityDeleteModal').style.display = 'none';
+    }
+
+    async function confirmSecureDelete(e) {
+      e.preventDefault();
+      if (!pendingDeleteAction) return;
+
+      const secCode = document.getElementById('secCodeInput').value.trim();
+      if (!secCode) {
+        showToast('Enter the Clinician Security Code.', true);
+        return;
+      }
+
+      const btn = document.getElementById('secDelConfirmBtn');
+      btn.disabled = true;
+      btn.textContent = 'Processing...';
+
+      try {
+        if (pendingDeleteAction.type === 'discharge') {
+          const targetId = pendingDeleteAction.id;
+          const res = await apiFetch(`/api/beds/${targetId}/discharge`, {
+            method: 'POST',
+            headers: { 'X-Security-Code': secCode },
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            showToast(err.detail || 'Could not discharge bed', true);
+            return;
+          }
+          const data = await res.json();
+          closeSecurityDeleteModal();
+          if (ws) ws.close();
+          await refreshVideoDropdown();
+          await loadBeds(false);
+          selectBed(data.bed);
+          await refreshSummaryAndAlerts();
+          await refreshArchivesList();
+          await downloadArchivePdf(data.archive_pdf);
+          showToast(`Discharged! PDF saved (${data.archive_pdf}) & ${data.bed.bed_code} is now VACANT.`);
+        } else if (pendingDeleteAction.type === 'bed') {
+          const deletedId = pendingDeleteAction.id;
+          const res = await apiFetch(`/api/beds/${deletedId}`, {
+            method: 'DELETE',
+            headers: { 'X-Security-Code': secCode },
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            showToast(err.detail || 'Could not delete bed', true);
+            return;
+          }
+          const data = await res.json();
+          closeSecurityDeleteModal();
+          if (ws) ws.close();
+          currentBed = null;
+          await refreshVideoDropdown();
+          await loadBeds(true);
+          await refreshSummaryAndAlerts();
+          await refreshArchivesList();
+          await downloadArchivePdf(data.archive_pdf);
+          showToast(`Archived ${data.archive_pdf} & deleted ${data.bed_code}.`);
+        } else if (pendingDeleteAction.type === 'video') {
+          const vidName = pendingDeleteAction.name;
+          const res = await apiFetch(`/api/videos/${encodeURIComponent(vidName)}`, {
+            method: 'DELETE',
+            headers: { 'X-Security-Code': secCode },
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            showToast(err.detail || 'Could not delete video', true);
+            return;
+          }
+          closeSecurityDeleteModal();
+          await refreshVideoDropdown();
+          await loadBeds(false);
+          if (currentBed) {
+            const refreshed = beds.find(b => b.id === currentBed.id);
+            if (refreshed) selectBed(refreshed);
+          }
+          showToast(`Deleted video ${vidName} from storage & database.`);
+        }
+      } catch (err) {
+        showToast('Action failed: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
       }
     }
 
@@ -428,12 +1138,15 @@
         const div = document.createElement('div');
         div.className = 'bed-item' + (currentBed && currentBed.id === b.id ? ' active' : '');
         div.tabIndex = 0;
+        const subtitle = b.lifecycle_state === 'VACANT'
+          ? 'VACANT SLOT — Ready for New Patient & Video'
+          : `${b.patient_name} • Target: ${b.prescribed_dpm ?? 'Obs'} DPM`;
         div.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <strong>${b.bed_code} (${b.ward_name})</strong>
             <span class="badge badge-${b.lifecycle_state}">${b.lifecycle_state}</span>
           </div>
-          <div style="font-size:0.78rem;color:var(--muted);">${b.patient_name} • Target: ${b.prescribed_dpm ?? 'Obs'} DPM</div>
+          <div style="font-size:0.78rem;color:var(--muted);">${subtitle}</div>
         `;
         div.onclick = () => selectBed(b);
         div.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectBed(b); } };
@@ -447,6 +1160,7 @@
 
     function populateBedForm(b) {
       document.getElementById('activeBedTitle').textContent = `${b.bed_code} — ${b.patient_name} (v${b.version_id})`;
+      document.getElementById('uploadTargetBedLabel').textContent = b.bed_code;
       document.getElementById('videoSelect').value = b.video_source;
       document.getElementById('dropFactor').value = String(b.drop_factor);
       document.getElementById('prescribedDpm').value = b.prescribed_dpm ?? '';
@@ -463,6 +1177,22 @@
       rateChart.data.labels = [];
       rateChart.data.datasets[0].data = [];
       rateChart.update();
+
+      if (b.lifecycle_state === 'VACANT') {
+        if (ws) ws.close();
+        document.getElementById('liveFrame').removeAttribute('src');
+        const sBox = document.getElementById('statusBox');
+        sBox.className = 'status-banner status-MEASURING';
+        document.getElementById('statusTitle').textContent = 'VACANT BED';
+        document.getElementById('statusReason').textContent = 'Click "+ Admit / Add" to assign a new patient & optical video to this bed.';
+        document.getElementById('confBadge').textContent = 'CONF: IDLE';
+        document.getElementById('kpiDrops').textContent = '0';
+        document.getElementById('kpiDpm').textContent = '--';
+        document.getElementById('kpiMlHr').textContent = '--';
+        document.getElementById('kpiVol').textContent = '0.00';
+        return;
+      }
+
       connectStream(b.id);
     }
 
@@ -473,9 +1203,15 @@
 
       ws.onmessage = (ev) => {
         const data = JSON.parse(ev.data);
+        if (data.type === 'vacant') {
+          document.getElementById('statusTitle').textContent = 'VACANT BED';
+          document.getElementById('statusReason').textContent = data.message;
+          return;
+        }
         if (data.type === 'bed_updated' && data.bed) {
           currentBed = data.bed;
           populateBedForm(data.bed);
+          refreshVideoDropdown();
           loadBeds(false);
           showToast(`Live sync: Bed updated by ${data.updated_by} (v${data.bed.version_id})`);
           return;
@@ -552,6 +1288,7 @@
       const pdpm = rawDpm === '' ? null : parseFloat(rawDpm);
       const roi = document.getElementById('roiInput').value.split(',').map(Number);
       const corridor = document.getElementById('corridorInput').value.split(',').map(Number);
+      const autoTrack = document.getElementById('autoTrackCheck').checked;
 
       const sourceChanged = vid !== currentBed.video_source;
       const res = await apiFetch(`/api/beds/${currentBed.id}`, {
@@ -566,6 +1303,7 @@
           target_duration_min: parseFloat(document.getElementById('targetDur').value),
           roi,
           corridor,
+          auto_track: autoTrack,
           version_id: currentBed.version_id,
         })
       });
@@ -575,10 +1313,13 @@
         const updated = await res.json();
         currentBed = updated;
         populateBedForm(updated);
+        await refreshVideoDropdown();
         fb.style.color = 'var(--green)';
-        fb.textContent = `Order synced at v${updated.version_id}.`;
+        fb.textContent = `Order & dynamic chamber lock synced at v${updated.version_id}.`;
         showToast(`Saved & synced across clients (v${updated.version_id})`);
-        if (sourceChanged) connectStream(currentBed.id);
+        if (sourceChanged || updated.id !== currentBed.id) {
+          selectBed(updated);
+        }
       } else if (res.status === 409) {
         const err = await res.json();
         const latest = err.detail.latest_bed;
