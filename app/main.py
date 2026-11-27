@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,7 +71,7 @@ DEFAULT_SIZE = int(DEFAULTS.get("input_size", 640))
 
 VIDEO_PRESETS = {
     "12076506": {"roi": [0.15, 0.12, 0.85, 0.88], "corridor": [0.25, 0.15, 0.75, 0.82]},
-    "15011120": {"roi": [0.20, 0.20, 0.85, 0.85], "corridor": [0.38, 0.30, 0.85, 0.78]},
+    "15011120": {"roi": [0.20, 0.20, 0.85, 0.85], "corridor": [0.22, 0.12, 0.78, 0.86]},  # old corridor covered only 27/153 frames
     "6248839":  {"roi": [0.15, 0.12, 0.85, 0.88], "corridor": [0.25, 0.10, 0.75, 0.85]},
     "13187829": {"roi": [0.12, 0.12, 0.88, 0.88], "corridor": [0.22, 0.12, 0.78, 0.86]},
     "12080909": {"roi": [0.15, 0.12, 0.85, 0.88], "corridor": [0.25, 0.15, 0.75, 0.82]},
@@ -307,7 +308,7 @@ def get_detector() -> OnnxDropDetector:
             )
         detector = OnnxDropDetector(
             str(MODEL_PATH),
-            conf=max(DEFAULT_CONF, 0.25),
+            conf=DEFAULT_CONF,  # engine applies its own min_conf gate
             iou=DEFAULT_IOU,
             size=DEFAULT_SIZE,
             providers=("CPUExecutionProvider",),
@@ -418,7 +419,8 @@ class BedSyncHub:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         if fps <= 1 or fps > 120:
             fps = 30.0
-        frame_delay = 1.0 / min(fps, 30.0)
+        frame_delay = 1.0 / fps          # true frame period (was capped at 30 fps -> 60 fps clips ran at half speed)
+        wall0 = time.monotonic()         # webcam clock origin
 
         frame_idx = 0
         last_db_log_idx = -999
@@ -443,12 +445,14 @@ class BedSyncHub:
                             await self.broadcast_bed_event(bed_id, {"error": f"Video not found: {pushed['video_source']}"})
                             break
                         engine.reset()
+                        wall0 = time.monotonic()
                         frame_idx = 0
                         last_db_log_idx = -999
 
                 if bed_id in self.reset_flags:
                     self.reset_flags.discard(bed_id)
                     engine.reset()
+                    wall0 = time.monotonic()
                     frame_idx = 0
                     last_db_log_idx = -999
                     if is_file:
@@ -459,13 +463,16 @@ class BedSyncHub:
                     if is_file:
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         engine.reset()
+                        wall0 = time.monotonic()
                         frame_idx = 0
                         last_db_log_idx = -999
                         continue
                     break
 
+                loop_t0 = time.monotonic()
                 H, W = fr.shape[:2]
-                t = frame_idx / fps
+                # files: deterministic video clock; live webcam: real wall clock (frame_idx/fps is wrong when frames drop)
+                t = frame_idx / fps if is_file else (time.monotonic() - wall0)
 
                 rx0 = max(0, min(W - 10, int(roi[0] * W)))
                 ry0 = max(0, min(H - 10, int(roi[1] * H)))
@@ -570,7 +577,8 @@ class BedSyncHub:
                 })
 
                 frame_idx += 1
-                await asyncio.sleep(frame_delay)
+                # sleep only the REMAINING frame budget (inference+encode time was previously added on top)
+                await asyncio.sleep(max(0.0, frame_delay - (time.monotonic() - loop_t0)))
         except asyncio.CancelledError:
             pass
         finally:
