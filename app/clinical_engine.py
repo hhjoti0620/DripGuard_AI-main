@@ -1,6 +1,6 @@
 """
 DripGuard AI - clinical_engine.py
-Single source of truth for drop counting + dynamic chamber-tracking telemetry.
+Single source of truth for drop counting + safe chamber-tracking telemetry.
 
 - DripFlowEngine : detections (normalised boxes + timestamp) -> drops, dpm, mL/hr, status
 - OnnxDropDetector : onnxruntime + numpy only (no ultralytics) -> deployable on CPU with Letterbox
@@ -21,27 +21,28 @@ class EngineConfig:
     drop_factor: float = 20.0               # gtt per mL (20 = macro, 60 = micro)
     prescribed_dpm: Optional[float] = None  # None -> no NORMAL/SLOW/FAST verdict
     tolerance: float = 0.25                 # +/- band around prescribed rate
-    min_conf: float = 0.25                  # minimum detector confidence
+    min_conf: float = 0.28                  # filter weak false positives while keeping real drops
     corridor: Optional[Tuple[float, float, float, float]] = None  # x0,y0,x1,y1 normalised
-    auto_track: bool = True                 # dynamically follow swaying IV drip chamber
-    min_area: float = 0.00008               # allow small/distant drops
-    max_area: float = 0.08                  # allow larger drop boxes
-    min_aspect: float = 0.20                # allow elongated/vertical drop boxes
-    max_aspect: float = 3.00                # allow wider drop boxes
-    tripwire_y: Optional[float] = None      # normalised y; optional virtual tripwire
-    max_jump: float = 0.25                  # max centroid jump between frames
-    max_missed_s: float = 0.15              # track retirement timeout
-    min_hits: int = 1                       # count real drops even if brief
-    reset_area_ratio: float = 0.45          # area drop => detached drop
-    reset_jump_up: float = 0.06             # upward jump => new drop at nozzle
-    min_interval_s: float = 0.20            # refractory window to avoid duplicate counts
-    refractory_frac: float = 0.35           # adaptive refractory = frac * median interval
-    static_after_s: float = 6.0             # static bubble / glare filter
+    auto_track: bool = True                 # bounded sway follow inside chamber corridor
+    max_corridor_drift: float = 0.10        # prevent corridor from ever jumping onto bag/cap/wall
+    min_area: float = 0.00012
+    max_area: float = 0.055                 # reject large non-drop blobs
+    min_aspect: float = 0.25
+    max_aspect: float = 2.50
+    tripwire_y: Optional[float] = None
+    max_jump: float = 0.20
+    max_missed_s: float = 0.14
+    min_hits: int = 2                       # require >=2 frames so single-frame bag/glare flickers don't count
+    reset_area_ratio: float = 0.45
+    reset_jump_up: float = 0.06
+    min_interval_s: float = 0.24
+    refractory_frac: float = 0.40
+    static_after_s: float = 5.0
     static_drift: float = 0.02
     rate_window_s: float = 20.0
     min_events_for_rate: int = 4
     startup_s: float = 10.0
-    stop_floor_s: float = 5.0               # STOPPED if silent for max(floor, stop_mult * median dt)
+    stop_floor_s: float = 5.0
     stop_mult: float = 3.0
 
 
@@ -91,7 +92,6 @@ class DripFlowEngine:
         self.t0: Optional[float] = None
         self.last_t = 0.0
         self._dts: Deque[float] = deque(maxlen=30)
-        self._missed_corridor_frames = 0
         self._ema_cx: Optional[float] = None
         self._ema_cy: Optional[float] = None
         self.dynamic_corridor: Optional[Tuple[float, float, float, float]] = self.cfg.corridor
@@ -101,7 +101,6 @@ class DripFlowEngine:
         self.dynamic_corridor = corridor
         self._ema_cx = None
         self._ema_cy = None
-        self._missed_corridor_frames = 0
 
     def _shape_and_conf_filter(self, boxes: Sequence[Box]) -> List[Box]:
         c = self.cfg
@@ -123,7 +122,8 @@ class DripFlowEngine:
     def _gate(self, boxes: Sequence[Box]) -> List[Box]:
         c = self.cfg
         valid_shapes = self._shape_and_conf_filter(boxes)
-        active_corr = self.dynamic_corridor or c.corridor
+        base_corr = c.corridor
+        active_corr = self.dynamic_corridor or base_corr
 
         if active_corr is None:
             return valid_shapes
@@ -135,43 +135,29 @@ class DripFlowEngine:
             if a <= cx <= d and b <= cy <= e:
                 in_corr.append(box)
 
-        if not c.auto_track:
-            return in_corr
-
-        if in_corr:
-            self._missed_corridor_frames = 0
+        if c.auto_track and in_corr and base_corr is not None:
+            ba, bb, bd, be = base_corr
+            base_cx = (ba + bd) * 0.5
+            base_cy = (bb + be) * 0.5
             best = max(in_corr, key=lambda x: x[4])
-            bcx = (best[0] + best[2]) / 2.0
-            bcy = (best[1] + best[3]) / 2.0
+            bcx = (best[0] + best[2]) * 0.5
+            bcy = (best[1] + best[3]) * 0.5
+
+            # Clamp target shift strictly around configured base corridor center
+            bcx = float(np.clip(bcx, base_cx - c.max_corridor_drift, base_cx + c.max_corridor_drift))
+            bcy = float(np.clip(bcy, base_cy - c.max_corridor_drift, base_cy + c.max_corridor_drift))
+
             if self._ema_cx is None or self._ema_cy is None:
                 self._ema_cx, self._ema_cy = bcx, bcy
             else:
-                self._ema_cx = 0.85 * self._ema_cx + 0.15 * bcx
-                self._ema_cy = 0.85 * self._ema_cy + 0.15 * bcy
+                self._ema_cx = 0.90 * self._ema_cx + 0.10 * bcx
+                self._ema_cy = 0.90 * self._ema_cy + 0.10 * bcy
 
-            cw = max(0.32, d - a)
-            ch = max(0.55, e - b)
+            cw = bd - ba
+            ch = be - bb
             nx0 = float(np.clip(self._ema_cx - cw * 0.5, 0.02, 0.98 - cw))
-            ny0 = float(np.clip(self._ema_cy - ch * 0.35, 0.02, 0.98 - ch))
+            ny0 = float(np.clip(self._ema_cy - ch * 0.5, 0.02, 0.98 - ch))
             self.dynamic_corridor = (round(nx0, 3), round(ny0, 3), round(nx0 + cw, 3), round(ny0 + ch, 3))
-            return in_corr
-
-        if valid_shapes:
-            self._missed_corridor_frames += 1
-            if self._missed_corridor_frames >= 10:
-                best = max(valid_shapes, key=lambda x: x[4])
-                bcx = (best[0] + best[2]) / 2.0
-                bcy = (best[1] + best[3]) / 2.0
-                self._ema_cx, self._ema_cy = bcx, bcy
-                cw = max(0.36, d - a)
-                ch = max(0.60, e - b)
-                nx0 = float(np.clip(bcx - cw * 0.5, 0.02, 0.98 - cw))
-                ny0 = float(np.clip(bcy - ch * 0.30, 0.02, 0.98 - ch))
-                self.dynamic_corridor = (round(nx0, 3), round(ny0, 3), round(nx0 + cw, 3), round(ny0 + ch, 3))
-                self._missed_corridor_frames = 0
-                return [best]
-        else:
-            self._missed_corridor_frames = 0
 
         return in_corr
 
@@ -234,7 +220,6 @@ class DripFlowEngine:
             if (jumped_up or shrank_sharp) and self._can_count_track(tr):
                 if self._register(t):
                     new_event = True
-                tr.counted = True
                 tr.t_first = t
                 tr.t_last = t
                 tr.cx, tr.cy, tr.area, tr.max_area, tr.cy0 = ncx, ncy, narea, narea, ncy
@@ -254,7 +239,6 @@ class DripFlowEngine:
                         new_event = True
                     tr.counted = True
 
-            # Static bubble / stationary glare filter after prolonged non-movement
             area_ratio = tr.max_area / max(tr.area, 1e-9)
             if (t - tr.t_first) > c.static_after_s and abs(tr.cy - tr.cy0) < c.static_drift and area_ratio < 1.35:
                 tr.static = True
@@ -372,7 +356,7 @@ def _nms(xyxy: np.ndarray, scores: np.ndarray, iou_thr: float) -> List[int]:
 class OnnxDropDetector:
     """onnxruntime-only detector with Ultralytics-exact letterbox preprocessing."""
 
-    def __init__(self, onnx_path: str, conf: float = 0.25, iou: float = 0.60, size: int = 640,
+    def __init__(self, onnx_path: str, conf: float = 0.28, iou: float = 0.60, size: int = 640,
                  providers: Sequence[str] = ("CPUExecutionProvider",), threads: int = 0):
         import onnxruntime as ort
         so = ort.SessionOptions()
