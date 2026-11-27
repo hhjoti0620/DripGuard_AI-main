@@ -64,11 +64,10 @@ ARCHIVES_DIR.mkdir(exist_ok=True)
 CLINICAL_SECURITY_CODE = os.getenv("DRIPGUARD_SECURITY_CODE", "DG-SEC-2026")
 
 DEFAULTS = json.loads(DEFAULTS_PATH.read_text(encoding="utf-8")) if DEFAULTS_PATH.exists() else {}
-DEFAULT_CONF = float(DEFAULTS.get("conf", 0.22))
+DEFAULT_CONF = float(DEFAULTS.get("conf", 0.45))
 DEFAULT_IOU = float(DEFAULTS.get("iou", 0.60))
 DEFAULT_SIZE = int(DEFAULTS.get("input_size", 640))
 
-# Wide adaptive ROI presets so swaying saline chambers never leave the scan field
 VIDEO_PRESETS = {
     "12076506": {"roi": [0.15, 0.12, 0.85, 0.88], "corridor": [0.25, 0.15, 0.75, 0.82]},
     "15011120": {"roi": [0.20, 0.20, 0.85, 0.85], "corridor": [0.38, 0.30, 0.85, 0.78]},
@@ -308,7 +307,7 @@ def get_detector() -> OnnxDropDetector:
             )
         detector = OnnxDropDetector(
             str(MODEL_PATH),
-            conf=max(DEFAULT_CONF, 0.20),
+            conf=max(DEFAULT_CONF, 0.45),
             iou=DEFAULT_IOU,
             size=DEFAULT_SIZE,
             providers=("CPUExecutionProvider",),
@@ -392,7 +391,7 @@ class BedSyncHub:
             tolerance=bed.tolerance,
             corridor=corridor,
             auto_track=True,
-            min_conf=0.22,
+            min_conf=0.45,
         )
         session_rec = InfusionSession(bed_id=bed_id, started_by=started_by, state="RUNNING")
         db.add(session_rec)
@@ -493,10 +492,8 @@ class BedSyncHub:
                 vis = cv2.resize(fr, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
                 sx, sy = out_w / W, out_h / H
 
-                # Draw outer Search ROI (Yellow)
                 cv2.rectangle(vis, (int(rx0 * sx), int(ry0 * sy)), (int(rx1 * sx), int(ry1 * sy)), (220, 190, 80), 1)
 
-                # Draw Dynamic Self-Centering Nozzle Corridor (Cyan/Blue)
                 dyn_corr = st.active_corridor or corridor
                 cx1 = int((rx0 + dyn_corr[0] * rw) * sx)
                 cy1 = int((ry0 + dyn_corr[1] * rh) * sy)
@@ -506,7 +503,6 @@ class BedSyncHub:
                 if engine.cfg.auto_track:
                     cv2.putText(vis, "AUTO-LOCK", (cx1 + 4, max(14, cy1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (56, 189, 248), 1, cv2.LINE_AA)
 
-                # Draw Tracked Fluid Drops (Neon Green)
                 for x1, y1, x2, y2, cf in st.boxes:
                     bx1 = int((rx0 + x1 * rw) * sx)
                     by1 = int((ry0 + y1 * rh) * sy)
