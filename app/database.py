@@ -12,6 +12,18 @@ engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+# 1:1 Bed-to-Video Mapping (6 Beds <-> 6 Sample Videos)
+BED_VIDEO_MAP = {
+    "BED-01": "12076506_1080_1920_60fps.mp4",
+    "BED-02": "15011120_1080_1920_30fps.mp4",
+    "BED-03": "6248839-hd_1080_1920_30fps (1).mp4",
+    "BED-04": "13187829_1080_1920_24fps.mp4",
+    "BED-05": "12080909_1080_1920_60fps.mp4",
+    "BED-06": "15765899_2160_3840_30fps (1).mp4",
+}
+
+VIDEO_BED_MAP = {video: bed for bed, video in BED_VIDEO_MAP.items()}
+
 
 class User(Base):
     __tablename__ = "users"
@@ -52,7 +64,7 @@ class InfusionBed(Base):
     drop_factor = Column(Float, default=20.0, nullable=False)
     prescribed_dpm = Column(Float, nullable=True)
     tolerance = Column(Float, default=0.25, nullable=False)
-    video_source = Column(String, default="15011120_1080_1920_30fps.mp4", nullable=False)
+    video_source = Column(String, default="12076506_1080_1920_60fps.mp4", nullable=False)
     roi_json = Column(String, default="[0.36, 0.36, 0.65, 0.72]", nullable=False)
     corridor_json = Column(String, default="[0.45, 0.36, 0.85, 0.72]", nullable=False)
     lifecycle_state = Column(String, default="ORDERED", nullable=False)
