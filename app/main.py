@@ -64,7 +64,7 @@ ARCHIVES_DIR.mkdir(exist_ok=True)
 CLINICAL_SECURITY_CODE = os.getenv("DRIPGUARD_SECURITY_CODE", "DG-SEC-2026")
 
 DEFAULTS = json.loads(DEFAULTS_PATH.read_text(encoding="utf-8")) if DEFAULTS_PATH.exists() else {}
-DEFAULT_CONF = float(DEFAULTS.get("conf", 0.45))
+DEFAULT_CONF = float(DEFAULTS.get("conf", 0.25))
 DEFAULT_IOU = float(DEFAULTS.get("iou", 0.60))
 DEFAULT_SIZE = int(DEFAULTS.get("input_size", 640))
 
@@ -307,7 +307,7 @@ def get_detector() -> OnnxDropDetector:
             )
         detector = OnnxDropDetector(
             str(MODEL_PATH),
-            conf=max(DEFAULT_CONF, 0.45),
+            conf=max(DEFAULT_CONF, 0.25),
             iou=DEFAULT_IOU,
             size=DEFAULT_SIZE,
             providers=("CPUExecutionProvider",),
@@ -391,7 +391,7 @@ class BedSyncHub:
             tolerance=bed.tolerance,
             corridor=corridor,
             auto_track=True,
-            min_conf=0.45,
+            min_conf=0.25,
         )
         session_rec = InfusionSession(bed_id=bed_id, started_by=started_by, state="RUNNING")
         db.add(session_rec)
