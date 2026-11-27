@@ -1,6 +1,6 @@
 """
 DripGuard AI - clinical_engine.py
-Single source of truth for drop counting + safe chamber-tracking telemetry.
+Single source of truth for drop counting + telemetry.
 
 - DripFlowEngine : detections (normalised boxes + timestamp) -> drops, dpm, mL/hr, status
 - OnnxDropDetector : onnxruntime + numpy only (no ultralytics) -> deployable on CPU with Letterbox
@@ -21,28 +21,23 @@ class EngineConfig:
     drop_factor: float = 20.0               # gtt per mL (20 = macro, 60 = micro)
     prescribed_dpm: Optional[float] = None  # None -> no NORMAL/SLOW/FAST verdict
     tolerance: float = 0.25                 # +/- band around prescribed rate
-    min_conf: float = 0.28                  # filter weak false positives while keeping real drops
+    min_conf: float = 0.20                  # minimum detector confidence
     corridor: Optional[Tuple[float, float, float, float]] = None  # x0,y0,x1,y1 normalised
-    auto_track: bool = True                 # bounded sway follow inside chamber corridor
-    max_corridor_drift: float = 0.10        # prevent corridor from ever jumping onto bag/cap/wall
-    min_area: float = 0.00012
-    max_area: float = 0.055                 # reject large non-drop blobs
-    min_aspect: float = 0.25
-    max_aspect: float = 2.50
-    tripwire_y: Optional[float] = None
-    max_jump: float = 0.20
-    max_missed_s: float = 0.14
-    min_hits: int = 2                       # require >=2 frames so single-frame bag/glare flickers don't count
-    reset_area_ratio: float = 0.45
-    reset_jump_up: float = 0.06
-    min_interval_s: float = 0.24
-    refractory_frac: float = 0.40
-    static_after_s: float = 5.0
+    auto_track: bool = False                # disabled by default; manual ROI/corridor control
+    tripwire_y: Optional[float] = None      # normalised y; optional virtual tripwire
+    max_jump: float = 0.25                  # max centroid jump between frames
+    max_missed_s: float = 0.15              # track retirement timeout
+    min_hits: int = 1                       # count real drops without dropping short tracks
+    reset_area_ratio: float = 0.45          # area shrinks => detached drop
+    reset_jump_up: float = 0.06             # upward jump => new drop at nozzle
+    min_interval_s: float = 0.20            # refractory window to avoid duplicate counts
+    refractory_frac: float = 0.35           # adaptive refractory = frac * median interval
+    static_after_s: float = 6.0             # static bubble / glare filter
     static_drift: float = 0.02
     rate_window_s: float = 20.0
     min_events_for_rate: int = 4
     startup_s: float = 10.0
-    stop_floor_s: float = 5.0
+    stop_floor_s: float = 5.0               # STOPPED if silent for max(floor, stop_mult * median dt)
     stop_mult: float = 3.0
 
 
@@ -92,79 +87,20 @@ class DripFlowEngine:
         self.t0: Optional[float] = None
         self.last_t = 0.0
         self._dts: Deque[float] = deque(maxlen=30)
-        self._ema_cx: Optional[float] = None
-        self._ema_cy: Optional[float] = None
-        self.dynamic_corridor: Optional[Tuple[float, float, float, float]] = self.cfg.corridor
 
     def sync_base_corridor(self, corridor: Optional[Tuple[float, float, float, float]]) -> None:
         self.cfg.corridor = corridor
-        self.dynamic_corridor = corridor
-        self._ema_cx = None
-        self._ema_cy = None
-
-    def _shape_and_conf_filter(self, boxes: Sequence[Box]) -> List[Box]:
-        c = self.cfg
-        out = []
-        for x1, y1, x2, y2, conf in boxes:
-            if conf < c.min_conf:
-                continue
-            w = max(x2 - x1, 1e-6)
-            h = max(y2 - y1, 1e-6)
-            area = w * h
-            if area < c.min_area or area > c.max_area:
-                continue
-            aspect = w / h
-            if aspect < c.min_aspect or aspect > c.max_aspect:
-                continue
-            out.append((x1, y1, x2, y2, conf))
-        return out
 
     def _gate(self, boxes: Sequence[Box]) -> List[Box]:
         c = self.cfg
-        valid_shapes = self._shape_and_conf_filter(boxes)
-        base_corr = c.corridor
-        active_corr = self.dynamic_corridor or base_corr
-
-        if active_corr is None:
-            return valid_shapes
-
-        a, b, d, e = active_corr
-        in_corr = []
-        for box in valid_shapes:
-            cx, cy = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
-            if a <= cx <= d and b <= cy <= e:
-                in_corr.append(box)
-
-        if c.auto_track and in_corr and base_corr is not None:
-            ba, bb, bd, be = base_corr
-            base_cx = (ba + bd) * 0.5
-            base_cy = (bb + be) * 0.5
-            best = max(in_corr, key=lambda x: x[4])
-            bcx = (best[0] + best[2]) * 0.5
-            bcy = (best[1] + best[3]) * 0.5
-
-            # Clamp target shift strictly around configured base corridor center
-            bcx = float(np.clip(bcx, base_cx - c.max_corridor_drift, base_cx + c.max_corridor_drift))
-            bcy = float(np.clip(bcy, base_cy - c.max_corridor_drift, base_cy + c.max_corridor_drift))
-
-            if self._ema_cx is None or self._ema_cy is None:
-                self._ema_cx, self._ema_cy = bcx, bcy
-            else:
-                self._ema_cx = 0.90 * self._ema_cx + 0.10 * bcx
-                self._ema_cy = 0.90 * self._ema_cy + 0.10 * bcy
-
-            cw = bd - ba
-            ch = be - bb
-            nx0 = float(np.clip(self._ema_cx - cw * 0.5, 0.02, 0.98 - cw))
-            ny0 = float(np.clip(self._ema_cy - ch * 0.5, 0.02, 0.98 - ch))
-            self.dynamic_corridor = (round(nx0, 3), round(ny0, 3), round(nx0 + cw, 3), round(ny0 + ch, 3))
-
-        return in_corr
-
-    def _can_count_track(self, tr: _Track) -> bool:
-        if tr.static or tr.counted or tr.hits < self.cfg.min_hits:
-            return False
-        return True
+        kept = [b for b in boxes if b[4] >= c.min_conf]
+        if c.corridor is None:
+            return kept
+        a, b, d, e = c.corridor
+        return [
+            box for box in kept
+            if a <= (box[0] + box[2]) / 2.0 <= d and b <= (box[1] + box[3]) / 2.0 <= e
+        ]
 
     def _median_dt(self) -> Optional[float]:
         if len(self.events) < 3:
@@ -217,7 +153,7 @@ class DripFlowEngine:
             jumped_up = (tr.cy - ncy) > c.reset_jump_up
             shrank_sharp = (tr.hits >= 2) and (narea < tr.max_area * c.reset_area_ratio)
 
-            if (jumped_up or shrank_sharp) and self._can_count_track(tr):
+            if (jumped_up or shrank_sharp) and not tr.static and not tr.counted and tr.hits >= c.min_hits:
                 if self._register(t):
                     new_event = True
                 tr.t_first = t
@@ -234,7 +170,7 @@ class DripFlowEngine:
             tr.hits += 1
 
             if c.tripwire_y is not None and not tr.counted and not tr.static:
-                if tr.cy0 < c.tripwire_y <= ncy and self._can_count_track(tr):
+                if tr.cy0 < c.tripwire_y <= ncy and tr.hits >= c.min_hits:
                     if self._register(t):
                         new_event = True
                     tr.counted = True
@@ -254,7 +190,7 @@ class DripFlowEngine:
         alive = []
         for tr in self.tracks:
             if (t - tr.t_last) > miss_budget:
-                if self._can_count_track(tr):
+                if not tr.static and not tr.counted and tr.hits >= c.min_hits:
                     if self._register(tr.t_last):
                         new_event = True
                 continue
@@ -322,7 +258,7 @@ class DripFlowEngine:
             confidence=self._confidence(n),
             n_events_window=n,
             boxes=dets,
-            active_corridor=self.dynamic_corridor or c.corridor,
+            active_corridor=c.corridor,
             new_event=new_event,
         )
 
@@ -356,7 +292,7 @@ def _nms(xyxy: np.ndarray, scores: np.ndarray, iou_thr: float) -> List[int]:
 class OnnxDropDetector:
     """onnxruntime-only detector with Ultralytics-exact letterbox preprocessing."""
 
-    def __init__(self, onnx_path: str, conf: float = 0.28, iou: float = 0.60, size: int = 640,
+    def __init__(self, onnx_path: str, conf: float = 0.20, iou: float = 0.60, size: int = 640,
                  providers: Sequence[str] = ("CPUExecutionProvider",), threads: int = 0):
         import onnxruntime as ort
         so = ort.SessionOptions()
