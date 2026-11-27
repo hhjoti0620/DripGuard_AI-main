@@ -1,6 +1,6 @@
 """
-DripGuard AI - clinical_engine_core.py
-Single source of truth for drop counting + flow-rate telemetry.
+DripGuard AI - clinical_engine.py
+Single source of truth for drop counting + dynamic chamber-tracking telemetry.
 
 - DripFlowEngine : detections (normalised boxes + timestamp) -> drops, dpm, mL/hr, status
 - OnnxDropDetector : onnxruntime + numpy only (no ultralytics) -> deployable on CPU with Letterbox
@@ -16,7 +16,6 @@ import numpy as np
 Box = Tuple[float, float, float, float, float]  # x1, y1, x2, y2 (normalised 0..1), conf
 
 
-# ----------------------------------------------------------------------------- config
 @dataclass
 class EngineConfig:
     drop_factor: float = 20.0               # gtt per mL (20 = macro, 60 = micro)
@@ -24,13 +23,14 @@ class EngineConfig:
     tolerance: float = 0.25                 # +/- band around prescribed rate
     min_conf: float = 0.0                   # extra confidence floor
     corridor: Optional[Tuple[float, float, float, float]] = None  # x0,y0,x1,y1 normalised
-    min_area: float = 0.0002                # filter tiny sensor noise
-    max_area: float = 0.08                  # reject large false detections (caps/meniscus)
-    min_aspect: float = 0.35                # reject ultra-thin vertical streaks
-    max_aspect: float = 2.40                # reject flat horizontal edges (chamber lip/meniscus)
+    auto_track: bool = True                 # dynamically follow swaying IV drip chamber
+    min_area: float = 0.00015               # filter tiny sensor noise
+    max_area: float = 0.09                  # reject large false detections (caps/meniscus)
+    min_aspect: float = 0.30                # reject ultra-thin vertical streaks
+    max_aspect: float = 2.60                # reject flat horizontal edges
     tripwire_y: Optional[float] = None      # normalised y; optional virtual tripwire
-    max_jump: float = 0.18                  # max centroid jump between consecutive frames
-    max_missed_s: float = 0.12              # fast track retirement at >=25fps; scales via 2.2*frame_dt
+    max_jump: float = 0.22                  # max centroid jump between consecutive frames
+    max_missed_s: float = 0.14              # fast track retirement at >=25fps
     min_hits: int = 2                       # require >=2 frames so 1-frame glare flickers never count
     reset_area_ratio: float = 0.50          # area shrinks < 50% of peak => drop detached from nozzle
     reset_jump_up: float = 0.055            # upward centroid jump => drop detached, new drop at nozzle
@@ -72,13 +72,13 @@ class FlowState:
     confidence: str
     n_events_window: int
     boxes: List[Box] = field(default_factory=list)
+    active_corridor: Optional[Tuple[float, float, float, float]] = None
     new_event: bool = False
 
     def as_dict(self) -> Dict:
         return asdict(self)
 
 
-# ----------------------------------------------------------------------------- engine
 class DripFlowEngine:
     def __init__(self, cfg: Optional[EngineConfig] = None):
         self.cfg = cfg or EngineConfig()
@@ -91,8 +91,19 @@ class DripFlowEngine:
         self.t0: Optional[float] = None
         self.last_t = 0.0
         self._dts: Deque[float] = deque(maxlen=30)
+        self._missed_corridor_frames = 0
+        self._ema_cx: Optional[float] = None
+        self._ema_cy: Optional[float] = None
+        self.dynamic_corridor: Optional[Tuple[float, float, float, float]] = self.cfg.corridor
 
-    def _gate(self, boxes: Sequence[Box]) -> List[Box]:
+    def sync_base_corridor(self, corridor: Optional[Tuple[float, float, float, float]]) -> None:
+        self.cfg.corridor = corridor
+        self.dynamic_corridor = corridor
+        self._ema_cx = None
+        self._ema_cy = None
+        self._missed_corridor_frames = 0
+
+    def _shape_filter(self, boxes: Sequence[Box]) -> List[Box]:
         c = self.cfg
         out = []
         for x1, y1, x2, y2, conf in boxes:
@@ -106,13 +117,66 @@ class DripFlowEngine:
             aspect = w / h
             if aspect < c.min_aspect or aspect > c.max_aspect:
                 continue
-            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-            if c.corridor is not None:
-                a, b, d, e = c.corridor
-                if not (a <= cx <= d and b <= cy <= e):
-                    continue
             out.append((x1, y1, x2, y2, conf))
         return out
+
+    def _gate(self, boxes: Sequence[Box]) -> List[Box]:
+        c = self.cfg
+        valid_shapes = self._shape_filter(boxes)
+        active_corr = self.dynamic_corridor or c.corridor
+
+        if active_corr is None:
+            return valid_shapes
+
+        a, b, d, e = active_corr
+        in_corr = []
+        for box in valid_shapes:
+            cx, cy = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
+            if a <= cx <= d and b <= cy <= e:
+                in_corr.append(box)
+
+        if not c.auto_track:
+            return in_corr
+
+        # Dynamic Auto-Follow Logic:
+        # 1) If drops are detected inside corridor, smoothly follow chamber sway via EMA
+        if in_corr:
+            self._missed_corridor_frames = 0
+            best = max(in_corr, key=lambda x: x[4])
+            bcx = (best[0] + best[2]) / 2.0
+            bcy = (best[1] + best[3]) / 2.0
+            if self._ema_cx is None or self._ema_cy is None:
+                self._ema_cx, self._ema_cy = bcx, bcy
+            else:
+                self._ema_cx = 0.85 * self._ema_cx + 0.15 * bcx
+                self._ema_cy = 0.85 * self._ema_cy + 0.15 * bcy
+
+            cw = max(0.32, d - a)
+            ch = max(0.55, e - b)
+            nx0 = float(np.clip(self._ema_cx - cw * 0.5, 0.02, 0.98 - cw))
+            ny0 = float(np.clip(self._ema_cy - ch * 0.35, 0.02, 0.98 - ch))
+            self.dynamic_corridor = (round(nx0, 3), round(ny0, 3), round(nx0 + cw, 3), round(ny0 + ch, 3))
+            return in_corr
+
+        # 2) If corridor has 0 hits for ~12 frames while valid drops exist elsewhere in ROI, auto-relock onto swaying chamber
+        if valid_shapes:
+            self._missed_corridor_frames += 1
+            if self._missed_corridor_frames >= 12:
+                best = max(valid_shapes, key=lambda x: x[4])
+                bcx = (best[0] + best[2]) / 2.0
+                bcy = (best[1] + best[3]) / 2.0
+                self._ema_cx, self._ema_cy = bcx, bcy
+                cw = max(0.36, d - a)
+                ch = max(0.60, e - b)
+                nx0 = float(np.clip(bcx - cw * 0.5, 0.02, 0.98 - cw))
+                ny0 = float(np.clip(bcy - ch * 0.30, 0.02, 0.98 - ch))
+                self.dynamic_corridor = (round(nx0, 3), round(ny0, 3), round(nx0 + cw, 3), round(ny0 + ch, 3))
+                self._missed_corridor_frames = 0
+                return [best]
+        else:
+            self._missed_corridor_frames = 0
+
+        return in_corr
 
     def _median_dt(self) -> Optional[float]:
         if len(self.events) < 3:
@@ -142,7 +206,7 @@ class DripFlowEngine:
         dets = self._gate(boxes)
         new_event = False
 
-        # 1) Nearest-centroid association with horizontal gating
+        # 1) Nearest-centroid association with adaptive horizontal gating for swaying chambers
         pairs = []
         for ti, tr in enumerate(self.tracks):
             for di, (x1, y1, x2, y2, _) in enumerate(dets):
@@ -150,7 +214,7 @@ class DripFlowEngine:
                 dx = abs(ncx - tr.cx)
                 dy = ncy - tr.cy
                 dist = float(np.hypot(dx, dy))
-                if dist <= c.max_jump and dx <= c.max_jump * 0.65:
+                if dist <= c.max_jump and dx <= c.max_jump * 0.80:
                     pairs.append((dist, ti, di))
         pairs.sort()
 
@@ -165,9 +229,8 @@ class DripFlowEngine:
             ncx, ncy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
             narea = max((x2 - x1) * (y2 - y1), 1e-9)
 
-            # Detach / Nozzle-cycle reset:
             jumped_up = (tr.cy - ncy) > c.reset_jump_up
-            shrank_sharp = (tr.hits >= 2) and (narea < tr.max_area * c.reset_area_ratio) and (ncy <= tr.cy + 0.02)
+            shrank_sharp = (tr.hits >= 2) and (narea < tr.max_area * c.reset_area_ratio) and (ncy <= tr.cy + 0.025)
 
             if (jumped_up or shrank_sharp) and tr.hits >= c.min_hits and not tr.counted and not tr.static:
                 if self._register(t):
@@ -185,14 +248,12 @@ class DripFlowEngine:
             tr.t_last = t
             tr.hits += 1
 
-            # Optional tripwire crossing
             if c.tripwire_y is not None and not tr.counted and not tr.static:
                 if tr.cy0 < c.tripwire_y <= ncy and tr.hits >= c.min_hits:
                     if self._register(t):
                         new_event = True
                     tr.counted = True
 
-            # Static wall bubble / reflection filter
             area_ratio = tr.max_area / max(tr.area, 1e-9)
             if (t - tr.t_first) > c.static_after_s and abs(tr.cy - tr.cy0) < c.static_drift and area_ratio < 1.35:
                 tr.static = True
@@ -206,7 +267,7 @@ class DripFlowEngine:
             self.tracks.append(_Track(self._next_id, t, t, cx, cy, a, a, cy))
             self._next_id += 1
 
-        # 3) Retire tracks that vanished (drop fell out of frame / nozzle)
+        # 3) Retire tracks that vanished
         alive = []
         for tr in self.tracks:
             if (t - tr.t_last) > miss_budget:
@@ -250,7 +311,7 @@ class DripFlowEngine:
         since_last = (t - self.events[-1]) if self.events else elapsed
 
         if not self.events and elapsed >= c.startup_s:
-            status, reason = "NO_DROPS_DETECTED", "No drop seen since start - check camera/ROI and verify at bedside"
+            status, reason = "NO_DROPS_DETECTED", "No drop seen since start - drag box over chamber or check line"
         elif self.events and since_last > stop_after:
             status, reason = "STOPPED_OR_OCCLUDED", f"No drop for {since_last:.1f}s - verify at bedside"
         elif dpm is None:
@@ -278,6 +339,7 @@ class DripFlowEngine:
             confidence=self._confidence(n),
             n_events_window=n,
             boxes=dets,
+            active_corridor=self.dynamic_corridor or c.corridor,
             new_event=new_event,
         )
 
@@ -287,7 +349,6 @@ class DripFlowEngine:
         return 60.0 * (len(self.events) - 1) / (self.events[-1] - self.events[0])
 
 
-# ----------------------------------------------------------------------------- detector
 def _nms(xyxy: np.ndarray, scores: np.ndarray, iou_thr: float) -> List[int]:
     order = scores.argsort()[::-1]
     keep: List[int] = []
