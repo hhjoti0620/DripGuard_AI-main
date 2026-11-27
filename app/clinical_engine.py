@@ -3,6 +3,7 @@ DripGuard AI - clinical_engine.py
 Single source of truth for drop counting + telemetry.
 
 - DripFlowEngine : detections (normalised boxes + timestamp) -> drops, dpm, mL/hr, status
+                  Drop = one pendant-drop DETACHMENT cycle at the nozzle (present -> gone), counted in real time.
 - OnnxDropDetector : onnxruntime + numpy only (no ultralytics) -> deployable on CPU with Letterbox
 """
 from __future__ import annotations
@@ -27,14 +28,17 @@ class EngineConfig:
     max_area: float = 0.055                 # reject large non-drop blobs
     min_aspect: float = 0.25
     max_aspect: float = 2.40
-    tripwire_y: Optional[float] = None
-    max_jump: float = 0.22
-    max_missed_s: float = 0.16
-    min_hits: int = 2                       # require >=2 hits so single-frame flickers don't overcount
-    reset_area_ratio: float = 0.30          # only treat as new drop on clear shrink/reset
-    reset_jump_up: float = 0.06
-    min_interval_s: float = 0.55            # prevent rapid multi-counting on a single drop
-    refractory_frac: float = 0.65           # adaptive refractory = frac * median interval
+    # --- pendant-drop cycle counter (v2) ---
+    nms_iomin: float = 0.50                 # merge nested duplicate boxes (intersection / smaller box)
+    warmup_s: float = 1.5                   # learn nozzle zone from topmost detections
+    zone_half_y: float = 0.07               # +/- band around learned nozzle y (ROI-normalised)
+    zone_half_x: float = 0.20               # +/- band around tracked drop x (handles hand-held drift)
+    zone_follow: float = 0.30               # EMA gain so the zone follows camera shake
+    present_min_frames: float = 1.5         # frames a drop must be seen to count as "forming"
+    absent_min_frames: float = 1.8          # frames of absence to confirm "detached"
+    min_grow_s: float = 0.10                # drop must hang >= this long before a detach counts
+    min_interval_s: float = 0.20            # hard floor (<= 300 dpm); adaptive part below
+    refractory_frac: float = 0.50           # adaptive refractory = frac * median interval
     static_after_s: float = 5.0
     static_drift: float = 0.02
     rate_window_s: float = 20.0
@@ -42,21 +46,6 @@ class EngineConfig:
     startup_s: float = 10.0
     stop_floor_s: float = 5.0
     stop_mult: float = 3.0
-
-
-@dataclass
-class _Track:
-    tid: int
-    t_first: float
-    t_last: float
-    cx: float
-    cy: float
-    area: float
-    max_area: float
-    cy0: float
-    hits: int = 1
-    counted: bool = False
-    static: bool = False
 
 
 @dataclass
@@ -79,21 +68,37 @@ class FlowState:
 
 
 class DripFlowEngine:
+    """Counts pendant-drop detachment cycles at the nozzle.
+
+    Why not track-death counting: the detector fires on the hanging drop on ~every frame, so
+    "box disappeared" fired on jitter/duplicates and a fixed 0.55 s refractory then decided the
+    final count. Here one drop == one (present for >= min_grow_s) -> (absent) transition inside
+    an adaptive nozzle zone, debounced in FRAMES so it works at 24, 30 and 60 fps.
+    """
+
     def __init__(self, cfg: Optional[EngineConfig] = None):
         self.cfg = cfg or EngineConfig()
         self.reset()
 
     def reset(self) -> None:
-        self.tracks: List[_Track] = []
         self.events: List[float] = []
-        self._next_id = 0
         self.t0: Optional[float] = None
         self.last_t = 0.0
         self._dts: Deque[float] = deque(maxlen=30)
+        self._warm_y: List[float] = []
+        self._warm_x: List[float] = []
+        self.zone_y: Optional[float] = None
+        self.zone_x: Optional[float] = None
+        self._present = False          # confirmed "drop hanging at nozzle"
+        self._run_start: Optional[float] = None
+        self._present_since: Optional[float] = None
+        self._last_seen: Optional[float] = None
+        self._frozen_until_t: float = -1.0
 
     def sync_base_corridor(self, corridor: Optional[Tuple[float, float, float, float]]) -> None:
         self.cfg.corridor = corridor
 
+    # ---------- gating ----------
     def _gate(self, boxes: Sequence[Box]) -> List[Box]:
         c = self.cfg
         kept: List[Box] = []
@@ -109,14 +114,32 @@ class DripFlowEngine:
                 continue
             kept.append((x1, y1, x2, y2, conf))
 
-        if c.corridor is None:
-            return kept
-        a, b, d, e = c.corridor
-        return [
-            box for box in kept
-            if a <= (box[0] + box[2]) / 2.0 <= d and b <= (box[1] + box[3]) / 2.0 <= e
-        ]
+        if c.corridor is not None:
+            a, b, d, e = c.corridor
+            kept = [
+                box for box in kept
+                if a <= (box[0] + box[2]) / 2.0 <= d and b <= (box[1] + box[3]) / 2.0 <= e
+            ]
+        return self._merge_nested(kept)
 
+    def _merge_nested(self, boxes: List[Box]) -> List[Box]:
+        """IoMin-NMS: one physical drop often yields 2-3 nested boxes of different size (IoU is low)."""
+        keep: List[Box] = []
+        for b in sorted(boxes, key=lambda x: -x[4]):
+            dup = False
+            ab = max((b[2] - b[0]) * (b[3] - b[1]), 1e-9)
+            for k in keep:
+                ix = max(0.0, min(b[2], k[2]) - max(b[0], k[0]))
+                iy = max(0.0, min(b[3], k[3]) - max(b[1], k[1]))
+                ak = max((k[2] - k[0]) * (k[3] - k[1]), 1e-9)
+                if ix * iy / min(ab, ak) > self.cfg.nms_iomin:
+                    dup = True
+                    break
+            if not dup:
+                keep.append(b)
+        return keep
+
+    # ---------- events ----------
     def _median_dt(self) -> Optional[float]:
         if len(self.events) < 3:
             return None
@@ -132,6 +155,23 @@ class DripFlowEngine:
         self.events.append(t)
         return True
 
+    def _zone_hit(self, dets: List[Box]) -> Optional[Box]:
+        """Best detection inside the (learned) nozzle zone, or None."""
+        if self.zone_y is None:
+            return None
+        c = self.cfg
+        best, best_d = None, 1e9
+        for b in dets:
+            cx, cy = (b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0
+            if abs(cy - self.zone_y) > c.zone_half_y:
+                continue
+            if self.zone_x is not None and abs(cx - self.zone_x) > c.zone_half_x:
+                continue
+            d = abs(cy - self.zone_y) + (abs(cx - self.zone_x) if self.zone_x is not None else 0.0)
+            if d < best_d:
+                best, best_d = b, d
+        return best
+
     def update(self, t: float, boxes: Sequence[Box]) -> FlowState:
         c = self.cfg
         if self.t0 is None:
@@ -140,77 +180,48 @@ class DripFlowEngine:
             self._dts.append(t - self.last_t)
         self.last_t = t
 
-        frame_dt = float(np.median(self._dts)) if self._dts else 0.0
-        miss_budget = max(c.max_missed_s, 2.5 * frame_dt)
+        frame_dt = float(np.median(self._dts)) if self._dts else 1.0 / 30.0
+        present_min_s = max(0.04, c.present_min_frames * frame_dt)
+        absent_min_s = max(0.04, c.absent_min_frames * frame_dt)
         dets = self._gate(boxes)
         new_event = False
 
-        pairs = []
-        for ti, tr in enumerate(self.tracks):
-            for di, (x1, y1, x2, y2, _) in enumerate(dets):
-                ncx, ncy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-                dist = float(np.hypot(ncx - tr.cx, ncy - tr.cy))
-                if dist <= c.max_jump:
-                    pairs.append((dist, ti, di))
-        pairs.sort()
+        # --- learn nozzle zone: topmost detection per frame during warm-up ---
+        if self.zone_y is None:
+            if dets:
+                top = min(dets, key=lambda b: (b[1] + b[3]) / 2.0)
+                self._warm_y.append((top[1] + top[3]) / 2.0)
+                self._warm_x.append((top[0] + top[2]) / 2.0)
+            if (t - self.t0) >= c.warmup_s and len(self._warm_y) >= 5:
+                self.zone_y = float(np.median(self._warm_y))
+                self._warm_y.clear()
+                self.zone_x = float(np.median(self._warm_x))
+                self._warm_x.clear()
+            return self._state(t, dets, False)
 
-        used_t, used_d = set(), set()
-        for dist, ti, di in pairs:
-            if ti in used_t or di in used_d:
-                continue
-            used_t.add(ti)
-            used_d.add(di)
-            tr = self.tracks[ti]
-            x1, y1, x2, y2, _ = dets[di]
-            ncx, ncy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-            narea = max((x2 - x1) * (y2 - y1), 1e-9)
-
-            jumped_up = (tr.cy - ncy) > c.reset_jump_up
-            shrank_sharp = (tr.hits >= 3) and (narea < tr.max_area * c.reset_area_ratio)
-
-            if (jumped_up or shrank_sharp) and not tr.static and not tr.counted and tr.hits >= c.min_hits:
-                if self._register(t):
+        hit = self._zone_hit(dets)
+        if hit is not None:
+            cx, cy = (hit[0] + hit[2]) / 2.0, (hit[1] + hit[3]) / 2.0
+            g = c.zone_follow
+            self.zone_y += g * (cy - self.zone_y)       # follow hand-held camera shake
+            self.zone_x += g * (cx - self.zone_x)
+            self._last_seen = t
+            if not self._present:
+                if self._run_start is None:
+                    self._run_start = t
+                if (t - self._run_start) >= present_min_s:
+                    self._present = True
+                    self._present_since = self._run_start
+        else:
+            if not self._present:
+                self._run_start = None                 # flicker before confirmation: restart
+            elif self._last_seen is not None and (t - self._last_seen) >= absent_min_s:
+                # drop that was hanging is gone -> DETACHED
+                grew = (self._last_seen - (self._present_since or self._last_seen)) >= c.min_grow_s
+                self._present = False
+                self._run_start = None
+                if grew and self._register(self._last_seen):
                     new_event = True
-                tr.t_first = t
-                tr.t_last = t
-                tr.cx, tr.cy, tr.area, tr.max_area, tr.cy0 = ncx, ncy, narea, narea, ncy
-                tr.hits = 1
-                tr.counted = False
-                tr.static = False
-                continue
-
-            tr.cx, tr.cy, tr.area = ncx, ncy, narea
-            tr.max_area = max(tr.max_area, narea)
-            tr.t_last = t
-            tr.hits += 1
-
-            if c.tripwire_y is not None and not tr.counted and not tr.static:
-                if tr.cy0 < c.tripwire_y <= ncy and tr.hits >= c.min_hits:
-                    if self._register(t):
-                        new_event = True
-                    tr.counted = True
-
-            area_ratio = tr.max_area / max(tr.area, 1e-9)
-            if (t - tr.t_first) > c.static_after_s and abs(tr.cy - tr.cy0) < c.static_drift and area_ratio < 1.35:
-                tr.static = True
-
-        for di, (x1, y1, x2, y2, _) in enumerate(dets):
-            if di in used_d:
-                continue
-            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-            a = max((x2 - x1) * (y2 - y1), 1e-9)
-            self.tracks.append(_Track(self._next_id, t, t, cx, cy, a, a, cy))
-            self._next_id += 1
-
-        alive = []
-        for tr in self.tracks:
-            if (t - tr.t_last) > miss_budget:
-                if not tr.static and not tr.counted and tr.hits >= c.min_hits:
-                    if self._register(tr.t_last):
-                        new_event = True
-                continue
-            alive.append(tr)
-        self.tracks = alive
 
         return self._state(t, dets, new_event)
 
