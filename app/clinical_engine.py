@@ -21,22 +21,23 @@ class EngineConfig:
     drop_factor: float = 20.0               # gtt per mL (20 = macro, 60 = micro)
     prescribed_dpm: Optional[float] = None  # None -> no NORMAL/SLOW/FAST verdict
     tolerance: float = 0.25                 # +/- band around prescribed rate
-    min_conf: float = 0.0                   # extra confidence floor
+    min_conf: float = 0.45                  # high confidence floor to reject bubbles/glare/noise
     corridor: Optional[Tuple[float, float, float, float]] = None  # x0,y0,x1,y1 normalised
     auto_track: bool = True                 # dynamically follow swaying IV drip chamber
-    min_area: float = 0.00015               # filter tiny sensor noise
-    max_area: float = 0.09                  # reject large false detections (caps/meniscus)
-    min_aspect: float = 0.30                # reject ultra-thin vertical streaks
-    max_aspect: float = 2.60                # reject flat horizontal edges
+    min_area: float = 0.00025               # reject tiny micro-bubbles & sensor noise
+    max_area: float = 0.055                 # reject large non-drop blobs (caps/meniscus/hand)
+    min_aspect: float = 0.40                # reject narrow vertical streaks
+    max_aspect: float = 1.90                # reject wide/flat bubble clusters or liquid menisci
+    min_fall_dy: float = 0.012              # minimum downward y-travel required to confirm a real falling drop
     tripwire_y: Optional[float] = None      # normalised y; optional virtual tripwire
-    max_jump: float = 0.22                  # max centroid jump between consecutive frames
+    max_jump: float = 0.18                  # max centroid jump between consecutive frames
     max_missed_s: float = 0.14              # fast track retirement at >=25fps
-    min_hits: int = 2                       # require >=2 frames so 1-frame glare flickers never count
+    min_hits: int = 2                       # require >=2 frames so 1-frame flickers never count
     reset_area_ratio: float = 0.50          # area shrinks < 50% of peak => drop detached from nozzle
     reset_jump_up: float = 0.055            # upward centroid jump => drop detached, new drop at nozzle
-    min_interval_s: float = 0.22            # hard refractory window (~270 dpm max)
-    refractory_frac: float = 0.40           # adaptive refractory = frac * median interval
-    static_after_s: float = 8.0             # static wall bubble / glare filter
+    min_interval_s: float = 0.25            # hard refractory window (~240 dpm max)
+    refractory_frac: float = 0.45           # adaptive refractory = frac * median interval
+    static_after_s: float = 6.0             # static wall bubble / glare filter
     static_drift: float = 0.025
     rate_window_s: float = 20.0
     min_events_for_rate: int = 4
@@ -103,7 +104,7 @@ class DripFlowEngine:
         self._ema_cy = None
         self._missed_corridor_frames = 0
 
-    def _shape_filter(self, boxes: Sequence[Box]) -> List[Box]:
+    def _shape_and_conf_filter(self, boxes: Sequence[Box]) -> List[Box]:
         c = self.cfg
         out = []
         for x1, y1, x2, y2, conf in boxes:
@@ -122,7 +123,7 @@ class DripFlowEngine:
 
     def _gate(self, boxes: Sequence[Box]) -> List[Box]:
         c = self.cfg
-        valid_shapes = self._shape_filter(boxes)
+        valid_shapes = self._shape_and_conf_filter(boxes)
         active_corr = self.dynamic_corridor or c.corridor
 
         if active_corr is None:
@@ -139,7 +140,7 @@ class DripFlowEngine:
             return in_corr
 
         # Dynamic Auto-Follow Logic:
-        # 1) If drops are detected inside corridor, smoothly follow chamber sway via EMA
+        # 1) If high-confidence drops are inside corridor, smoothly follow chamber sway via EMA
         if in_corr:
             self._missed_corridor_frames = 0
             best = max(in_corr, key=lambda x: x[4])
@@ -158,10 +159,10 @@ class DripFlowEngine:
             self.dynamic_corridor = (round(nx0, 3), round(ny0, 3), round(nx0 + cw, 3), round(ny0 + ch, 3))
             return in_corr
 
-        # 2) If corridor has 0 hits for ~12 frames while valid drops exist elsewhere in ROI, auto-relock onto swaying chamber
+        # 2) If corridor has 0 hits for ~15 frames while high-confidence drops exist elsewhere, auto-relock
         if valid_shapes:
             self._missed_corridor_frames += 1
-            if self._missed_corridor_frames >= 12:
+            if self._missed_corridor_frames >= 15:
                 best = max(valid_shapes, key=lambda x: x[4])
                 bcx = (best[0] + best[2]) / 2.0
                 bcy = (best[1] + best[3]) / 2.0
@@ -177,6 +178,13 @@ class DripFlowEngine:
             self._missed_corridor_frames = 0
 
         return in_corr
+
+    def _is_valid_drop_trajectory(self, tr: _Track) -> bool:
+        """Rejects stationary/jittering bubbles and non-falling objects."""
+        if tr.static or tr.counted or tr.hits < self.cfg.min_hits:
+            return False
+        net_fall_y = tr.cy - tr.cy0
+        return net_fall_y >= self.cfg.min_fall_dy
 
     def _median_dt(self) -> Optional[float]:
         if len(self.events) < 3:
@@ -206,7 +214,7 @@ class DripFlowEngine:
         dets = self._gate(boxes)
         new_event = False
 
-        # 1) Nearest-centroid association with adaptive horizontal gating for swaying chambers
+        # 1) Nearest-centroid association with horizontal gating
         pairs = []
         for ti, tr in enumerate(self.tracks):
             for di, (x1, y1, x2, y2, _) in enumerate(dets):
@@ -214,7 +222,7 @@ class DripFlowEngine:
                 dx = abs(ncx - tr.cx)
                 dy = ncy - tr.cy
                 dist = float(np.hypot(dx, dy))
-                if dist <= c.max_jump and dx <= c.max_jump * 0.80:
+                if dist <= c.max_jump and dx <= c.max_jump * 0.65:
                     pairs.append((dist, ti, di))
         pairs.sort()
 
@@ -232,7 +240,7 @@ class DripFlowEngine:
             jumped_up = (tr.cy - ncy) > c.reset_jump_up
             shrank_sharp = (tr.hits >= 2) and (narea < tr.max_area * c.reset_area_ratio) and (ncy <= tr.cy + 0.025)
 
-            if (jumped_up or shrank_sharp) and tr.hits >= c.min_hits and not tr.counted and not tr.static:
+            if (jumped_up or shrank_sharp) and self._is_valid_drop_trajectory(tr):
                 if self._register(t):
                     new_event = True
                 tr.t_first = t
@@ -249,13 +257,15 @@ class DripFlowEngine:
             tr.hits += 1
 
             if c.tripwire_y is not None and not tr.counted and not tr.static:
-                if tr.cy0 < c.tripwire_y <= ncy and tr.hits >= c.min_hits:
+                if tr.cy0 < c.tripwire_y <= ncy and self._is_valid_drop_trajectory(tr):
                     if self._register(t):
                         new_event = True
                     tr.counted = True
 
+            # Static bubble / reflection / jittering blob filter
+            total_travel = float(np.hypot(tr.cx - tr.cx, tr.cy - tr.cy0))
             area_ratio = tr.max_area / max(tr.area, 1e-9)
-            if (t - tr.t_first) > c.static_after_s and abs(tr.cy - tr.cy0) < c.static_drift and area_ratio < 1.35:
+            if (t - tr.t_first) > c.static_after_s and total_travel < c.static_drift and area_ratio < 1.35:
                 tr.static = True
 
         # 2) Create new tracks for unmatched detections
@@ -267,11 +277,11 @@ class DripFlowEngine:
             self.tracks.append(_Track(self._next_id, t, t, cx, cy, a, a, cy))
             self._next_id += 1
 
-        # 3) Retire tracks that vanished
+        # 3) Retire tracks that vanished (confirm only if it moved downward like a real drop)
         alive = []
         for tr in self.tracks:
             if (t - tr.t_last) > miss_budget:
-                if tr.hits >= c.min_hits and not tr.counted and not tr.static:
+                if self._is_valid_drop_trajectory(tr):
                     if self._register(tr.t_last):
                         new_event = True
                 continue
@@ -311,7 +321,7 @@ class DripFlowEngine:
         since_last = (t - self.events[-1]) if self.events else elapsed
 
         if not self.events and elapsed >= c.startup_s:
-            status, reason = "NO_DROPS_DETECTED", "No drop seen since start - drag box over chamber or check line"
+            status, reason = "NO_DROPS_DETECTED", "No falling drop seen since start - verify chamber view or clamp"
         elif self.events and since_last > stop_after:
             status, reason = "STOPPED_OR_OCCLUDED", f"No drop for {since_last:.1f}s - verify at bedside"
         elif dpm is None:
@@ -373,7 +383,7 @@ def _nms(xyxy: np.ndarray, scores: np.ndarray, iou_thr: float) -> List[int]:
 class OnnxDropDetector:
     """onnxruntime-only detector with Ultralytics-exact letterbox preprocessing."""
 
-    def __init__(self, onnx_path: str, conf: float = 0.163, iou: float = 0.60, size: int = 640,
+    def __init__(self, onnx_path: str, conf: float = 0.45, iou: float = 0.60, size: int = 640,
                  providers: Sequence[str] = ("CPUExecutionProvider",), threads: int = 0):
         import onnxruntime as ort
         so = ort.SessionOptions()
