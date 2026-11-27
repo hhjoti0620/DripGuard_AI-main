@@ -21,23 +21,26 @@ class EngineConfig:
     drop_factor: float = 20.0               # gtt per mL (20 = macro, 60 = micro)
     prescribed_dpm: Optional[float] = None  # None -> no NORMAL/SLOW/FAST verdict
     tolerance: float = 0.25                 # +/- band around prescribed rate
-    min_conf: float = 0.20                  # minimum detector confidence
+    min_conf: float = 0.25                  # filter weak noise while keeping real drops
     corridor: Optional[Tuple[float, float, float, float]] = None  # x0,y0,x1,y1 normalised
-    auto_track: bool = False                # disabled by default; manual ROI/corridor control
-    tripwire_y: Optional[float] = None      # normalised y; optional virtual tripwire
-    max_jump: float = 0.25                  # max centroid jump between frames
-    max_missed_s: float = 0.15              # track retirement timeout
-    min_hits: int = 1                       # count real drops without dropping short tracks
-    reset_area_ratio: float = 0.45          # area shrinks => detached drop
-    reset_jump_up: float = 0.06             # upward jump => new drop at nozzle
-    min_interval_s: float = 0.20            # refractory window to avoid duplicate counts
-    refractory_frac: float = 0.35           # adaptive refractory = frac * median interval
-    static_after_s: float = 6.0             # static bubble / glare filter
+    auto_track: bool = False                # manual control only
+    max_area: float = 0.055                 # reject large non-drop blobs
+    min_aspect: float = 0.25
+    max_aspect: float = 2.40
+    tripwire_y: Optional[float] = None
+    max_jump: float = 0.22
+    max_missed_s: float = 0.16
+    min_hits: int = 2                       # require >=2 hits so single-frame flickers don't overcount
+    reset_area_ratio: float = 0.30          # only treat as new drop on clear shrink/reset
+    reset_jump_up: float = 0.06
+    min_interval_s: float = 0.55            # prevent rapid multi-counting on a single drop
+    refractory_frac: float = 0.65           # adaptive refractory = frac * median interval
+    static_after_s: float = 5.0
     static_drift: float = 0.02
     rate_window_s: float = 20.0
     min_events_for_rate: int = 4
     startup_s: float = 10.0
-    stop_floor_s: float = 5.0               # STOPPED if silent for max(floor, stop_mult * median dt)
+    stop_floor_s: float = 5.0
     stop_mult: float = 3.0
 
 
@@ -93,7 +96,19 @@ class DripFlowEngine:
 
     def _gate(self, boxes: Sequence[Box]) -> List[Box]:
         c = self.cfg
-        kept = [b for b in boxes if b[4] >= c.min_conf]
+        kept: List[Box] = []
+        for x1, y1, x2, y2, conf in boxes:
+            if conf < c.min_conf:
+                continue
+            w = max(x2 - x1, 1e-6)
+            h = max(y2 - y1, 1e-6)
+            if (w * h) > c.max_area:
+                continue
+            aspect = w / h
+            if aspect < c.min_aspect or aspect > c.max_aspect:
+                continue
+            kept.append((x1, y1, x2, y2, conf))
+
         if c.corridor is None:
             return kept
         a, b, d, e = c.corridor
@@ -151,7 +166,7 @@ class DripFlowEngine:
             narea = max((x2 - x1) * (y2 - y1), 1e-9)
 
             jumped_up = (tr.cy - ncy) > c.reset_jump_up
-            shrank_sharp = (tr.hits >= 2) and (narea < tr.max_area * c.reset_area_ratio)
+            shrank_sharp = (tr.hits >= 3) and (narea < tr.max_area * c.reset_area_ratio)
 
             if (jumped_up or shrank_sharp) and not tr.static and not tr.counted and tr.hits >= c.min_hits:
                 if self._register(t):
@@ -292,7 +307,7 @@ def _nms(xyxy: np.ndarray, scores: np.ndarray, iou_thr: float) -> List[int]:
 class OnnxDropDetector:
     """onnxruntime-only detector with Ultralytics-exact letterbox preprocessing."""
 
-    def __init__(self, onnx_path: str, conf: float = 0.20, iou: float = 0.60, size: int = 640,
+    def __init__(self, onnx_path: str, conf: float = 0.25, iou: float = 0.60, size: int = 640,
                  providers: Sequence[str] = ("CPUExecutionProvider",), threads: int = 0):
         import onnxruntime as ort
         so = ort.SessionOptions()
